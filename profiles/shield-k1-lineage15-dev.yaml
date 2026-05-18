@@ -1,0 +1,155 @@
+schema_version: 1
+profile: shield-k1-lineage15-dev
+lineage:
+  branch: lineage-15.1
+  repo_url: https://github.com/LineageOS/android.git
+  sync_jobs: 16
+  extra_projects:
+  - name: LineageOS/android_device_nvidia_shieldtablet
+    path: device/nvidia/shieldtablet
+    remote: github
+    revision: lineage-15.1
+  - name: LineageOS/android_device_nvidia_shield-common
+    path: device/nvidia/shield-common
+    remote: github
+    revision: lineage-15.1
+  - name: LineageOS/android_kernel_nvidia_shield
+    path: kernel/nvidia/shield
+    remote: github
+    revision: lineage-15.1
+android:
+  api_level: 27
+  abi: armeabi-v7a
+targets:
+  tablet:
+    device: shieldtablet
+    lunch: lineage_shieldtablet-userdebug
+    output_product: shieldtablet
+    product_makefile: device/nvidia/shieldtablet/lineage.mk
+    build_command: mka bacon
+  emulator:
+    lunch: sdk_phone_x86-userdebug
+    output_product: generic_x86
+    product_makefile: build/make/target/product/sdk_phone_x86.mk
+    build_command: WITHOUT_CHECK_API=true mka
+apps:
+  home_assistant:
+    module: HomeAssistantMinimal
+    package: io.homeassistant.companion.android.minimal
+    apk: inputs/apks/HomeAssistantMinimal.apk
+    sha256: 54a3d3ebae1841d9b2724aa781b79eec3fcb5f8114661d1aaba32b2b944f76f0
+    version: 2026.4.4-minimal
+    version_code: 21576
+    min_sdk: 23
+    abi: armeabi-v7a
+  browser:
+    module: FennecFdroid
+    package: org.mozilla.fennec_fdroid
+    apk: inputs/apks/FennecFdroid.apk
+    sha256: ac2ba44a0e3051d5f3d4e74e8471f3c9eb728868d0e628edfd3added5519065b
+    version: 150.0.3
+    version_code: 1500300
+    min_sdk: 26
+    abi: armeabi-v7a
+  emulator_browser:
+    module: PrivacyBrowser
+    package: com.stoutner.privacybrowser.standard
+    apk: inputs/apks/PrivacyBrowser.apk
+    sha256: 543f90e2e0adfc25059ed0c9bbaefbddcb33bd966caa23df7ada3441ecef1d5b
+    version: 3.19.2
+    version_code: 78
+    min_sdk: 26
+    abi: x86
+kiosk:
+  launcher:
+    module: RosieKioskLauncher
+    package: local.rosie.kiosk
+  theme:
+    title: Rosie Kiosk
+    subtitle: Home Assistant and browser access
+    font_family: sans
+    background:
+      type: color
+      fit: cover
+      loop: true
+      fallback_color: '#0f1216'
+      scrim_color: '#00000000'
+    text:
+      color: '#ffffff'
+      subtitle_color: '#bec6cd'
+      title_size_sp: 34
+      subtitle_size_sp: 18
+      shadow_color: '#99000000'
+      shadow_radius_dp: 2
+      shadow_dx_dp: 0
+      shadow_dy_dp: 2
+    buttons:
+      home_assistant_label: Home Assistant
+      browser_label: Browser
+      background_color: '#00a884'
+      text_color: '#ffffff'
+      accent_color: '#007c61'
+      border_color: '#00a884'
+      focus_border_color: '#007c61'
+      text_size_sp: 22
+      radius_dp: 6
+      min_height_dp: 68
+      width_dp: 520
+  remove_modules:
+  - AudioFX
+  - Eleven
+  - Home
+  - Jelly
+  - Launcher2
+  - Launcher3
+  - LineageParts
+  - LineageSetupWizard
+  - LockClock
+  - Profiles
+  - Recorder
+  - Snap
+  - Trebuchet
+  - Updater
+  remove_packages:
+  - org.lineageos.audiofx
+  - org.lineageos.eleven
+  - org.lineageos.jelly
+  - org.lineageos.lineageparts
+  - org.lineageos.lockclock
+  - org.lineageos.profiles
+  - org.lineageos.recorder
+  - org.lineageos.setupwizard
+  - org.lineageos.snap
+  - org.lineageos.trebuchet
+  - org.lineageos.updater
+blobs:
+  archive: inputs/vendor-blobs/vendor-nvidia-shieldtablet-lineage15.tar.zst
+  sha256: a93922c7a2989dc7b0d06ecfcfa5c517357b5e81b3f1a123f9622d45e8117fb7
+validation:
+  home_assistant: launch-only
+  emulator_policy: companion-image
+  use_sdk_emulator: true
+  no_gms_packages:
+  - com.google.android.gms
+  - com.android.vending
+  boot_timeout_seconds: 600
+device:
+  expected_device: shieldtablet
+  serial: null
+  vendor_id: null
+deployment:
+  mode: recovery_sideload
+  destructive_flags_required: true
+  boot_timeout_seconds: 600
+  post_flash_timeout_seconds: 900
+paths:
+  android_root: .work/android-lineage15
+  ccache: .work/ccache-lineage15
+  dist: dist
+runner:
+  image: rosie-local-ha/android-runner:lineage15
+  dockerfile: container/lineage15/Dockerfile
+  cpus: 24
+  memory: 48Gi
+output:
+  artifact_name: shield-k1-ha-kiosk-lineage15

@@ -1,0 +1,35 @@
+# Copy to profiles/local/site.yaml and replace private values before building.
+kiosk:
+  theme:
+    title: Local Home
+    subtitle: Kitchen, lights, climate, and camera controls
+    font_family: sans-serif
+    background:
+      type: image
+      path: inputs/kiosk-assets/site-background.png
+      sha256: REPLACE_WITH_BACKGROUND_SHA256
+      fit: cover
+      loop: true
+      fallback_color: '#121212'
+      scrim_color: '#B8070A0E'
+    text:
+      color: '#e5e7eb'
+      subtitle_color: '#9ca3af'
+      title_size_sp: 38
+      subtitle_size_sp: 18
+      shadow_color: '#B8000000'
+      shadow_radius_dp: 3
+      shadow_dx_dp: 0
+      shadow_dy_dp: 2
+    buttons:
+      home_assistant_label: Home Assistant
+      browser_label: Browser
+      background_color: '#CC2c2c2c'
+      text_color: '#e5e7eb'
+      accent_color: '#33fbc02d'
+      border_color: '#99404040'
+      focus_border_color: '#fbc02d'
+      text_size_sp: 22
+      radius_dp: 8
+      min_height_dp: 72
+      width_dp: 560

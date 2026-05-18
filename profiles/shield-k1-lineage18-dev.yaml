@@ -1,0 +1,67 @@
+schema_version: 1
+profile: shield-k1-lineage18-dev
+
+lineage:
+  branch: lineage-18.1
+  repo_url: https://github.com/LineageOS/android.git
+  sync_jobs: 16
+
+targets:
+  tablet:
+    device: shieldtablet
+    lunch: lineage_shieldtablet-userdebug
+    output_product: shieldtablet
+    product_makefile: device/nvidia/shieldtablet/lineage_shieldtablet.mk
+    build_command: mka bacon
+  emulator:
+    lunch: lineage_x86_64-userdebug
+    output_product: x86_64
+    product_makefile: vendor/lineage/build/target/product/lineage_x86_64.mk
+    build_command: mka
+
+apps:
+  home_assistant:
+    module: HomeAssistantMinimal
+    package: io.homeassistant.companion.android.minimal
+    apk: inputs/apks/HomeAssistantMinimal.apk
+    sha256: REPLACE_WITH_HOME_ASSISTANT_MINIMAL_APK_SHA256
+  browser:
+    module: Chromium
+    package: org.chromium.chrome
+    apk: inputs/apks/Chromium.apk
+    sha256: REPLACE_WITH_CHROMIUM_APK_SHA256
+
+blobs:
+  archive: inputs/vendor-blobs/vendor-nvidia-shieldtablet.tar.zst
+  sha256: REPLACE_WITH_VENDOR_BLOB_ARCHIVE_SHA256
+
+validation:
+  home_assistant: launch-only
+  no_gms_packages:
+    - com.google.android.gms
+    - com.android.vending
+  boot_timeout_seconds: 600
+
+device:
+  expected_device: shieldtablet
+  serial: null
+  vendor_id: null
+
+deployment:
+  mode: recovery_sideload
+  destructive_flags_required: true
+  boot_timeout_seconds: 600
+  post_flash_timeout_seconds: 900
+
+paths:
+  android_root: .work/android
+  ccache: .work/ccache
+  dist: dist
+
+runner:
+  image: rosie-local-ha/android-runner:lineage18
+  cpus: 24
+  memory: 48Gi
+
+output:
+  artifact_name: shield-k1-ha-kiosk

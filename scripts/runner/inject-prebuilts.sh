@@ -1,0 +1,816 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${ANDROID_ROOT:?ANDROID_ROOT is required}"
+: "${REPO_ROOT:?REPO_ROOT is required}"
+: "${HA_MODULE:?HA_MODULE is required}"
+: "${HA_PACKAGE:?HA_PACKAGE is required}"
+: "${HA_APK:?HA_APK is required}"
+: "${BROWSER_MODULE:?BROWSER_MODULE is required}"
+: "${BROWSER_PACKAGE:?BROWSER_PACKAGE is required}"
+: "${BROWSER_APK:?BROWSER_APK is required}"
+: "${EMULATOR_BROWSER_MODULE:?EMULATOR_BROWSER_MODULE is required}"
+: "${EMULATOR_BROWSER_APK:?EMULATOR_BROWSER_APK is required}"
+KIOSK_LAUNCHER_MODULE="${KIOSK_LAUNCHER_MODULE:-RosieKioskLauncher}"
+KIOSK_LAUNCHER_PACKAGE="${KIOSK_LAUNCHER_PACKAGE:-local.rosie.kiosk}"
+KIOSK_REMOVE_MODULES="${KIOSK_REMOVE_MODULES:-}"
+KIOSK_TITLE="${KIOSK_TITLE:-Rosie Kiosk}"
+KIOSK_SUBTITLE="${KIOSK_SUBTITLE:-Home Assistant and browser access}"
+KIOSK_FONT_FAMILY="${KIOSK_FONT_FAMILY:-sans}"
+KIOSK_BACKGROUND_TYPE="${KIOSK_BACKGROUND_TYPE:-color}"
+KIOSK_BACKGROUND_PATH="${KIOSK_BACKGROUND_PATH:-}"
+KIOSK_BACKGROUND_FIT="${KIOSK_BACKGROUND_FIT:-cover}"
+KIOSK_BACKGROUND_LOOP="${KIOSK_BACKGROUND_LOOP:-true}"
+KIOSK_BACKGROUND_FALLBACK_COLOR="${KIOSK_BACKGROUND_FALLBACK_COLOR:-#0f1216}"
+KIOSK_BACKGROUND_SCRIM_COLOR="${KIOSK_BACKGROUND_SCRIM_COLOR:-#00000000}"
+KIOSK_TEXT_COLOR="${KIOSK_TEXT_COLOR:-#ffffff}"
+KIOSK_SUBTITLE_COLOR="${KIOSK_SUBTITLE_COLOR:-#bec6cd}"
+KIOSK_TITLE_SIZE_SP="${KIOSK_TITLE_SIZE_SP:-34}"
+KIOSK_SUBTITLE_SIZE_SP="${KIOSK_SUBTITLE_SIZE_SP:-18}"
+KIOSK_TEXT_SHADOW_COLOR="${KIOSK_TEXT_SHADOW_COLOR:-#99000000}"
+KIOSK_TEXT_SHADOW_RADIUS_DP="${KIOSK_TEXT_SHADOW_RADIUS_DP:-2}"
+KIOSK_TEXT_SHADOW_DX_DP="${KIOSK_TEXT_SHADOW_DX_DP:-0}"
+KIOSK_TEXT_SHADOW_DY_DP="${KIOSK_TEXT_SHADOW_DY_DP:-2}"
+KIOSK_BUTTON_HA_LABEL="${KIOSK_BUTTON_HA_LABEL:-Home Assistant}"
+KIOSK_BUTTON_BROWSER_LABEL="${KIOSK_BUTTON_BROWSER_LABEL:-Browser}"
+KIOSK_BUTTON_BACKGROUND_COLOR="${KIOSK_BUTTON_BACKGROUND_COLOR:-#00a884}"
+KIOSK_BUTTON_TEXT_COLOR="${KIOSK_BUTTON_TEXT_COLOR:-#ffffff}"
+KIOSK_BUTTON_ACCENT_COLOR="${KIOSK_BUTTON_ACCENT_COLOR:-#007c61}"
+KIOSK_BUTTON_BORDER_COLOR="${KIOSK_BUTTON_BORDER_COLOR:-#00a884}"
+KIOSK_BUTTON_FOCUS_BORDER_COLOR="${KIOSK_BUTTON_FOCUS_BORDER_COLOR:-#007c61}"
+KIOSK_BUTTON_TEXT_SIZE_SP="${KIOSK_BUTTON_TEXT_SIZE_SP:-22}"
+KIOSK_BUTTON_RADIUS_DP="${KIOSK_BUTTON_RADIUS_DP:-6}"
+KIOSK_BUTTON_MIN_HEIGHT_DP="${KIOSK_BUTTON_MIN_HEIGHT_DP:-68}"
+KIOSK_BUTTON_WIDTH_DP="${KIOSK_BUTTON_WIDTH_DP:-520}"
+export \
+  HA_PACKAGE \
+  BROWSER_PACKAGE \
+  KIOSK_LAUNCHER_PACKAGE \
+  KIOSK_TITLE \
+  KIOSK_SUBTITLE \
+  KIOSK_FONT_FAMILY \
+  KIOSK_BACKGROUND_TYPE \
+  KIOSK_BACKGROUND_FIT \
+  KIOSK_BACKGROUND_LOOP \
+  KIOSK_BACKGROUND_FALLBACK_COLOR \
+  KIOSK_BACKGROUND_SCRIM_COLOR \
+  KIOSK_TEXT_COLOR \
+  KIOSK_SUBTITLE_COLOR \
+  KIOSK_TITLE_SIZE_SP \
+  KIOSK_SUBTITLE_SIZE_SP \
+  KIOSK_TEXT_SHADOW_COLOR \
+  KIOSK_TEXT_SHADOW_RADIUS_DP \
+  KIOSK_TEXT_SHADOW_DX_DP \
+  KIOSK_TEXT_SHADOW_DY_DP \
+  KIOSK_BUTTON_HA_LABEL \
+  KIOSK_BUTTON_BROWSER_LABEL \
+  KIOSK_BUTTON_BACKGROUND_COLOR \
+  KIOSK_BUTTON_TEXT_COLOR \
+  KIOSK_BUTTON_ACCENT_COLOR \
+  KIOSK_BUTTON_BORDER_COLOR \
+  KIOSK_BUTTON_FOCUS_BORDER_COLOR \
+  KIOSK_BUTTON_TEXT_SIZE_SP \
+  KIOSK_BUTTON_RADIUS_DP \
+  KIOSK_BUTTON_MIN_HEIGHT_DP \
+  KIOSK_BUTTON_WIDTH_DP
+
+ROSIE_VENDOR="${ANDROID_ROOT}/vendor/rosie"
+APP_DIR="${ROSIE_VENDOR}/prebuilt_apps"
+KIOSK_DIR="${ROSIE_VENDOR}/kiosk_launcher"
+PRODUCT_DIR="${ROSIE_VENDOR}/product"
+ADB_DIR="${ROSIE_VENDOR}/adb"
+OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/core/res/res/values"
+SETTINGS_OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/packages/SettingsProvider/res/values"
+
+mkdir -p \
+  "${APP_DIR}/${HA_MODULE}" \
+  "${APP_DIR}/${BROWSER_MODULE}" \
+  "${APP_DIR}/${EMULATOR_BROWSER_MODULE}" \
+  "${KIOSK_DIR}/res/values" \
+  "${KIOSK_DIR}/res/drawable-nodpi" \
+  "${KIOSK_DIR}/res/raw" \
+  "${KIOSK_DIR}/src/${KIOSK_LAUNCHER_PACKAGE//.//}" \
+  "${PRODUCT_DIR}" \
+  "${ADB_DIR}" \
+  "${OVERLAY_VALUES_DIR}" \
+  "${SETTINGS_OVERLAY_VALUES_DIR}"
+cp "${REPO_ROOT}/${HA_APK}" "${APP_DIR}/${HA_MODULE}/${HA_MODULE}.apk"
+cp "${REPO_ROOT}/${BROWSER_APK}" "${APP_DIR}/${BROWSER_MODULE}/${BROWSER_MODULE}.apk"
+if [[ "${EMULATOR_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
+  cp "${REPO_ROOT}/${EMULATOR_BROWSER_APK}" "${APP_DIR}/${EMULATOR_BROWSER_MODULE}/${EMULATOR_BROWSER_MODULE}.apk"
+fi
+if [[ -n "${ADB_PUBLIC_KEY:-}" ]]; then
+  if [[ ! -f "${REPO_ROOT}/${ADB_PUBLIC_KEY}" ]]; then
+    echo "missing adb public key: ${REPO_ROOT}/${ADB_PUBLIC_KEY}" >&2
+    exit 1
+  fi
+  cp "${REPO_ROOT}/${ADB_PUBLIC_KEY}" "${ADB_DIR}/adb_keys"
+fi
+
+rm -f \
+  "${KIOSK_DIR}/res/drawable-nodpi/kiosk_background".* \
+  "${KIOSK_DIR}/res/raw/kiosk_background".*
+if [[ "${KIOSK_BACKGROUND_TYPE}" == "image" || "${KIOSK_BACKGROUND_TYPE}" == "video" ]]; then
+  if [[ -z "${KIOSK_BACKGROUND_PATH}" || ! -f "${REPO_ROOT}/${KIOSK_BACKGROUND_PATH}" ]]; then
+    echo "missing kiosk background asset: ${REPO_ROOT}/${KIOSK_BACKGROUND_PATH}" >&2
+    exit 1
+  fi
+  background_ext="${KIOSK_BACKGROUND_PATH##*.}"
+  background_ext="${background_ext,,}"
+  if [[ "${KIOSK_BACKGROUND_TYPE}" == "image" ]]; then
+    if [[ "${background_ext}" == "jpeg" ]]; then
+      background_ext="jpg"
+    fi
+    cp "${REPO_ROOT}/${KIOSK_BACKGROUND_PATH}" "${KIOSK_DIR}/res/drawable-nodpi/kiosk_background.${background_ext}"
+  else
+    cp "${REPO_ROOT}/${KIOSK_BACKGROUND_PATH}" "${KIOSK_DIR}/res/raw/kiosk_background.${background_ext}"
+  fi
+fi
+
+write_if_changed() {
+  local path="$1"
+  local tmp="${path}.rosie-tmp"
+  cat > "${tmp}"
+  if [[ ! -f "${path}" ]] || ! cmp -s "${tmp}" "${path}"; then
+    mv "${tmp}" "${path}"
+  else
+    rm "${tmp}"
+  fi
+}
+
+replace_once() {
+  local path="$1"
+  local from="$2"
+  local to="$3"
+
+  if [[ ! -f "${path}" ]]; then
+    echo "missing patch target: ${path}" >&2
+    return 1
+  fi
+  if grep -Fq "${to}" "${path}"; then
+    return 0
+  fi
+  if ! grep -Fq "${from}" "${path}"; then
+    echo "patch target did not contain expected text: ${path}" >&2
+    return 1
+  fi
+  sed -i "s|${from}|${to}|g" "${path}"
+}
+
+replace_block_once() {
+  local path="$1"
+  local from="$2"
+  local to="$3"
+
+  if [[ ! -f "${path}" ]]; then
+    echo "missing patch target: ${path}" >&2
+    return 1
+  fi
+  python3 - "${path}" "${from}" "${to}" <<'PY'
+import sys
+
+path, source, replacement = sys.argv[1:4]
+with open(path, "r", encoding="utf-8") as handle:
+    content = handle.read()
+if replacement in content:
+    raise SystemExit(0)
+if source not in content:
+    print(f"patch target did not contain expected text: {path}", file=sys.stderr)
+    raise SystemExit(1)
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(content.replace(source, replacement))
+PY
+}
+
+replace_once \
+  "${ANDROID_ROOT}/device/nvidia/shield-common/system_prop.mk" \
+  "persist.sys.usb.config=mtp" \
+  "persist.sys.usb.config=mtp,adb"
+
+replace_once \
+  "${ANDROID_ROOT}/device/nvidia/shieldtablet/initfiles/init.tn8_common.rc" \
+  "setprop persist.sys.usb.config mtp" \
+  "setprop persist.sys.usb.config mtp,adb"
+
+replace_block_once \
+  "${ANDROID_ROOT}/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java" \
+  "        if (mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_enableWifiDisplay)
+                || SystemProperties.getInt(FORCE_WIFI_DISPLAY_ENABLE, -1) == 1) {" \
+  "        if ((mContext.getResources().getBoolean(
+                com.android.internal.R.bool.config_enableWifiDisplay)
+                || SystemProperties.getInt(FORCE_WIFI_DISPLAY_ENABLE, -1) == 1)
+                && mContext.getSystemService(Context.WIFI_P2P_SERVICE) != null) {"
+
+remove_product_package_entries() {
+  local path="$1"
+  local module
+
+  if [[ ! -f "${path}" || -z "${KIOSK_REMOVE_MODULES}" ]]; then
+    return 0
+  fi
+
+  for module in ${KIOSK_REMOVE_MODULES}; do
+    sed -i -E \
+      -e "/^[[:space:]]*${module}[[:space:]]*\\\\?[[:space:]]*(#.*)?$/d" \
+      -e "/^[[:space:]]*PRODUCT_PACKAGES[[:space:]]*\\+=[[:space:]]*${module}[[:space:]]*(#.*)?$/d" \
+      "${path}"
+  done
+}
+
+for product_makefile in \
+  build/target/product/core.mk \
+  build/target/product/core_base.mk \
+  build/target/product/sdk_base.mk \
+  vendor/lineage/config/common.mk \
+  vendor/lineage/config/common_full.mk \
+  device/nvidia/shieldtablet/device.mk; do
+  remove_product_package_entries "${ANDROID_ROOT}/${product_makefile}"
+done
+
+prune_staged_product_packages() {
+  local product="$1"
+  local product_out="${ANDROID_ROOT}/out/target/product/${product}"
+  local module
+
+  if [[ ! -d "${product_out}" || -z "${KIOSK_REMOVE_MODULES}" ]]; then
+    return 0
+  fi
+
+  for module in ${KIOSK_REMOVE_MODULES}; do
+    rm -rf \
+      "${product_out}/system/app/${module}" \
+      "${product_out}/system/priv-app/${module}" \
+      "${product_out}/data/app/${module}" \
+      "${product_out}/obj/APPS/${module}_intermediates"
+  done
+}
+
+prune_staged_product_packages "${EMULATOR_OUTPUT_PRODUCT}"
+prune_staged_product_packages "${TABLET_OUTPUT_PRODUCT}"
+
+{
+cat <<EOF_MK
+LOCAL_PATH := \$(call my-dir)
+
+include \$(CLEAR_VARS)
+LOCAL_MODULE := ${HA_MODULE}
+LOCAL_SRC_FILES := ${HA_MODULE}/${HA_MODULE}.apk
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_SUFFIX := \$(COMMON_ANDROID_PACKAGE_SUFFIX)
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_MODULE_TAGS := optional
+LOCAL_PRODUCT_MODULE := true
+include \$(BUILD_PREBUILT)
+
+include \$(CLEAR_VARS)
+LOCAL_MODULE := ${BROWSER_MODULE}
+LOCAL_SRC_FILES := ${BROWSER_MODULE}/${BROWSER_MODULE}.apk
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_SUFFIX := \$(COMMON_ANDROID_PACKAGE_SUFFIX)
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_MODULE_TAGS := optional
+LOCAL_PRODUCT_MODULE := true
+include \$(BUILD_PREBUILT)
+EOF_MK
+
+if [[ "${EMULATOR_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
+cat <<EOF_MK
+include \$(CLEAR_VARS)
+LOCAL_MODULE := ${EMULATOR_BROWSER_MODULE}
+LOCAL_SRC_FILES := ${EMULATOR_BROWSER_MODULE}/${EMULATOR_BROWSER_MODULE}.apk
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_SUFFIX := \$(COMMON_ANDROID_PACKAGE_SUFFIX)
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_MODULE_TAGS := optional
+LOCAL_PRODUCT_MODULE := true
+include \$(BUILD_PREBUILT)
+EOF_MK
+fi
+} | write_if_changed "${APP_DIR}/Android.mk"
+
+write_if_changed "${KIOSK_DIR}/Android.mk" <<EOF_MK
+LOCAL_PATH := \$(call my-dir)
+
+include \$(CLEAR_VARS)
+LOCAL_PACKAGE_NAME := ${KIOSK_LAUNCHER_MODULE}
+LOCAL_MODULE_TAGS := optional
+LOCAL_CERTIFICATE := platform
+LOCAL_PRIVILEGED_MODULE := true
+LOCAL_OVERRIDES_PACKAGES := ${KIOSK_REMOVE_MODULES}
+LOCAL_SRC_FILES := \$(call all-java-files-under, src)
+LOCAL_RESOURCE_DIR := \$(LOCAL_PATH)/res
+LOCAL_PROGUARD_ENABLED := disabled
+include \$(BUILD_PACKAGE)
+EOF_MK
+
+write_if_changed "${KIOSK_DIR}/AndroidManifest.xml" <<EOF_XML
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="${KIOSK_LAUNCHER_PACKAGE}"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="27" />
+
+    <application
+        android:theme="@style/AppTheme"
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:resizeableActivity="false">
+        <activity
+            android:name=".LauncherActivity"
+            android:clearTaskOnLaunch="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF_XML
+
+write_if_changed "${KIOSK_DIR}/res/values/strings.xml" <<EOF_XML
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rosie Kiosk</string>
+</resources>
+EOF_XML
+
+write_if_changed "${KIOSK_DIR}/res/values/styles.xml" <<EOF_XML
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#00a884</item>
+    </style>
+</resources>
+EOF_XML
+
+python3 - "${KIOSK_DIR}/src/${KIOSK_LAUNCHER_PACKAGE//.//}/LauncherActivity.java" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def j(value):
+    return json.dumps(str(value))
+
+
+def i(name):
+    return int(os.environ[name])
+
+
+path = Path(sys.argv[1])
+package_name = os.environ["KIOSK_LAUNCHER_PACKAGE"]
+background_type = os.environ["KIOSK_BACKGROUND_TYPE"]
+background_loop = "true" if os.environ["KIOSK_BACKGROUND_LOOP"].lower() in ("1", "true", "yes", "on") else "false"
+if background_type == "image":
+    background_method = """    private View backgroundView() {
+        ImageView image = new ImageView(this);
+        image.setImageResource(R.drawable.kiosk_background);
+        image.setScaleType(imageScaleType());
+        return image;
+    }
+"""
+elif background_type == "video":
+    background_method = """    private View backgroundView() {
+        FrameLayout container = new FrameLayout(this);
+        container.setClipChildren(true);
+        final AspectVideoView video = new AspectVideoView(this, BACKGROUND_FIT);
+        Uri uri = Uri.parse(\"android.resource://\" + getPackageName() + \"/\" + R.raw.kiosk_background);
+        video.setVideoURI(uri);
+        video.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer player) {
+                player.setLooping(BACKGROUND_LOOP);
+                player.setVolume(0f, 0f);
+                video.setVideoSize(player.getVideoWidth(), player.getVideoHeight());
+                video.start();
+            }
+        });
+        container.addView(video, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER));
+        return container;
+    }
+"""
+else:
+    background_method = """    private View backgroundView() {
+        return null;
+    }
+"""
+content = f"""package {package_name};
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.VideoView;
+
+public class LauncherActivity extends Activity {{
+    private static final String HA_PACKAGE = {j(os.environ["HA_PACKAGE"])};
+    private static final String BROWSER_PACKAGE = {j(os.environ["BROWSER_PACKAGE"])};
+    private static final String TITLE = {j(os.environ["KIOSK_TITLE"])};
+    private static final String SUBTITLE = {j(os.environ["KIOSK_SUBTITLE"])};
+    private static final String FONT_FAMILY = {j(os.environ["KIOSK_FONT_FAMILY"])};
+    private static final String BACKGROUND_TYPE = {j(os.environ["KIOSK_BACKGROUND_TYPE"])};
+    private static final String BACKGROUND_FIT = {j(os.environ["KIOSK_BACKGROUND_FIT"])};
+    private static final boolean BACKGROUND_LOOP = {background_loop};
+    private static final String BACKGROUND_COLOR = {j(os.environ["KIOSK_BACKGROUND_FALLBACK_COLOR"])};
+    private static final String SCRIM_COLOR = {j(os.environ["KIOSK_BACKGROUND_SCRIM_COLOR"])};
+    private static final String TEXT_COLOR = {j(os.environ["KIOSK_TEXT_COLOR"])};
+    private static final String SUBTITLE_COLOR = {j(os.environ["KIOSK_SUBTITLE_COLOR"])};
+    private static final int TITLE_SIZE_SP = {i("KIOSK_TITLE_SIZE_SP")};
+    private static final int SUBTITLE_SIZE_SP = {i("KIOSK_SUBTITLE_SIZE_SP")};
+    private static final String TEXT_SHADOW_COLOR = {j(os.environ["KIOSK_TEXT_SHADOW_COLOR"])};
+    private static final int TEXT_SHADOW_RADIUS_DP = {i("KIOSK_TEXT_SHADOW_RADIUS_DP")};
+    private static final int TEXT_SHADOW_DX_DP = {i("KIOSK_TEXT_SHADOW_DX_DP")};
+    private static final int TEXT_SHADOW_DY_DP = {i("KIOSK_TEXT_SHADOW_DY_DP")};
+    private static final String HA_LABEL = {j(os.environ["KIOSK_BUTTON_HA_LABEL"])};
+    private static final String BROWSER_LABEL = {j(os.environ["KIOSK_BUTTON_BROWSER_LABEL"])};
+    private static final String BUTTON_BACKGROUND_COLOR = {j(os.environ["KIOSK_BUTTON_BACKGROUND_COLOR"])};
+    private static final String BUTTON_TEXT_COLOR = {j(os.environ["KIOSK_BUTTON_TEXT_COLOR"])};
+    private static final String BUTTON_ACCENT_COLOR = {j(os.environ["KIOSK_BUTTON_ACCENT_COLOR"])};
+    private static final String BUTTON_BORDER_COLOR = {j(os.environ["KIOSK_BUTTON_BORDER_COLOR"])};
+    private static final String BUTTON_FOCUS_BORDER_COLOR = {j(os.environ["KIOSK_BUTTON_FOCUS_BORDER_COLOR"])};
+    private static final int BUTTON_TEXT_SIZE_SP = {i("KIOSK_BUTTON_TEXT_SIZE_SP")};
+    private static final int BUTTON_RADIUS_DP = {i("KIOSK_BUTTON_RADIUS_DP")};
+    private static final int BUTTON_MIN_HEIGHT_DP = {i("KIOSK_BUTTON_MIN_HEIGHT_DP")};
+    private static final int BUTTON_WIDTH_DP = {i("KIOSK_BUTTON_WIDTH_DP")};
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {{
+        super.onCreate(savedInstanceState);
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setContentView(createContent());
+        hideSystemUi();
+    }}
+
+    @Override
+    protected void onResume() {{
+        super.onResume();
+        hideSystemUi();
+    }}
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {{
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {{
+            hideSystemUi();
+        }}
+    }}
+
+    private View createContent() {{
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor(BACKGROUND_COLOR));
+
+        View background = backgroundView();
+        if (background != null) {{
+            root.addView(background, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }}
+
+        View scrim = new View(this);
+        scrim.setBackgroundColor(Color.parseColor(SCRIM_COLOR));
+        root.addView(scrim, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER);
+        content.setPadding(dp(64), dp(48), dp(64), dp(48));
+
+        Typeface typeface = Typeface.create(FONT_FAMILY, Typeface.NORMAL);
+        Typeface titleTypeface = Typeface.create(FONT_FAMILY, Typeface.BOLD);
+        TextView title = new TextView(this);
+        title.setText(TITLE);
+        title.setTextColor(Color.parseColor(TEXT_COLOR));
+        title.setTextSize(TITLE_SIZE_SP);
+        title.setTypeface(titleTypeface);
+        title.setGravity(Gravity.CENTER);
+        title.setIncludeFontPadding(false);
+        applyTextShadow(title);
+        content.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(SUBTITLE);
+        subtitle.setTextColor(Color.parseColor(SUBTITLE_COLOR));
+        subtitle.setTextSize(SUBTITLE_SIZE_SP);
+        subtitle.setTypeface(typeface);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setIncludeFontPadding(false);
+        applyTextShadow(subtitle);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        subtitleParams.setMargins(0, dp(10), 0, dp(36));
+        content.addView(subtitle, subtitleParams);
+
+        content.addView(appButton(HA_LABEL, HA_PACKAGE, typeface));
+        content.addView(appButton(BROWSER_LABEL, BROWSER_PACKAGE, typeface));
+        FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER);
+        root.addView(content, contentParams);
+        return root;
+    }}
+
+{background_method}
+
+    private ImageView.ScaleType imageScaleType() {{
+        if ("contain".equals(BACKGROUND_FIT)) {{
+            return ImageView.ScaleType.FIT_CENTER;
+        }}
+        if ("stretch".equals(BACKGROUND_FIT)) {{
+            return ImageView.ScaleType.FIT_XY;
+        }}
+        return ImageView.ScaleType.CENTER_CROP;
+    }}
+
+    private static class AspectVideoView extends VideoView {{
+        private final String fit;
+        private int videoWidth = 0;
+        private int videoHeight = 0;
+
+        public AspectVideoView(Context context, String fit) {{
+            super(context);
+            this.fit = fit;
+        }}
+
+        public void setVideoSize(int width, int height) {{
+            videoWidth = width;
+            videoHeight = height;
+            requestLayout();
+        }}
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {{
+            int viewWidth = MeasureSpec.getSize(widthMeasureSpec);
+            int viewHeight = MeasureSpec.getSize(heightMeasureSpec);
+            if (viewWidth <= 0 || viewHeight <= 0 || videoWidth <= 0 || videoHeight <= 0) {{
+                setMeasuredDimension(viewWidth, viewHeight);
+                return;
+            }}
+            if ("stretch".equals(fit)) {{
+                setMeasuredDimension(viewWidth, viewHeight);
+                return;
+            }}
+
+            float videoRatio = (float) videoWidth / (float) videoHeight;
+            float viewRatio = (float) viewWidth / (float) viewHeight;
+            int measuredWidth = viewWidth;
+            int measuredHeight = viewHeight;
+
+            if ("height".equals(fit)) {{
+                measuredHeight = viewHeight;
+                measuredWidth = Math.round(viewHeight * videoRatio);
+            }} else if ("contain".equals(fit)) {{
+                if (videoRatio > viewRatio) {{
+                    measuredWidth = viewWidth;
+                    measuredHeight = Math.round(viewWidth / videoRatio);
+                }} else {{
+                    measuredHeight = viewHeight;
+                    measuredWidth = Math.round(viewHeight * videoRatio);
+                }}
+            }} else {{
+                if (videoRatio > viewRatio) {{
+                    measuredHeight = viewHeight;
+                    measuredWidth = Math.round(viewHeight * videoRatio);
+                }} else {{
+                    measuredWidth = viewWidth;
+                    measuredHeight = Math.round(viewWidth / videoRatio);
+                }}
+            }}
+
+            setMeasuredDimension(measuredWidth, measuredHeight);
+        }}
+    }}
+
+    private void applyTextShadow(TextView textView) {{
+        textView.setShadowLayer(
+                dp(TEXT_SHADOW_RADIUS_DP),
+                dp(TEXT_SHADOW_DX_DP),
+                dp(TEXT_SHADOW_DY_DP),
+                Color.parseColor(TEXT_SHADOW_COLOR));
+    }}
+
+    private Button appButton(String label, final String packageName, Typeface typeface) {{
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextColor(Color.parseColor(BUTTON_TEXT_COLOR));
+        button.setTextSize(BUTTON_TEXT_SIZE_SP);
+        button.setTypeface(typeface, Typeface.BOLD);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setIncludeFontPadding(false);
+        button.setPadding(dp(28), 0, dp(28), 0);
+        button.setMinHeight(dp(BUTTON_MIN_HEIGHT_DP));
+        button.setMinimumHeight(dp(BUTTON_MIN_HEIGHT_DP));
+        button.setElevation(dp(2));
+        button.setBackground(buttonBackground());
+        button.setOnClickListener(new View.OnClickListener() {{
+            @Override
+            public void onClick(View view) {{
+                launchPackage(packageName);
+            }}
+        }});
+        int available = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(128));
+        int targetWidth = Math.min(available, dp(BUTTON_WIDTH_DP));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                targetWidth,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, dp(10), 0, dp(10));
+        button.setLayoutParams(params);
+        return button;
+    }}
+
+    private StateListDrawable buttonBackground() {{
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[] {{ android.R.attr.state_pressed }}, roundedButton(BUTTON_ACCENT_COLOR, BUTTON_FOCUS_BORDER_COLOR, 2));
+        states.addState(new int[] {{ android.R.attr.state_focused }}, roundedButton(BUTTON_ACCENT_COLOR, BUTTON_FOCUS_BORDER_COLOR, 2));
+        states.addState(new int[] {{}}, roundedButton(BUTTON_BACKGROUND_COLOR, BUTTON_BORDER_COLOR, 1));
+        return states;
+    }}
+
+    private GradientDrawable roundedButton(String color, String borderColor, int strokeDp) {{
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.parseColor(color));
+        drawable.setStroke(dp(strokeDp), Color.parseColor(borderColor));
+        drawable.setCornerRadius(dp(BUTTON_RADIUS_DP));
+        return drawable;
+    }}
+
+    private void launchPackage(String packageName) {{
+        Intent intent = getPackageManager().getLaunchIntentForPackage(packageName);
+        if (intent == null) {{
+            Toast.makeText(this, "App is not available", Toast.LENGTH_SHORT).show();
+            return;
+        }}
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        startActivity(intent);
+    }}
+
+    private void hideSystemUi() {{
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }}
+
+    private int dp(int value) {{
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }}
+}}
+"""
+
+tmp = path.with_suffix(path.suffix + ".rosie-tmp")
+tmp.write_text(content, encoding="utf-8")
+if not path.exists() or tmp.read_bytes() != path.read_bytes():
+    tmp.replace(path)
+else:
+    tmp.unlink()
+PY
+
+write_if_changed "${OVERLAY_VALUES_DIR}/config.xml" <<EOF_XML
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Kiosk images rely on bundled tzdata and do not ship a timezone updater app pair. -->
+    <bool name="config_timeZoneRulesUpdateTrackingEnabled">false</bool>
+    <bool name="config_enableWifiDisplay">false</bool>
+    <bool name="config_disableLockscreenByDefault">true</bool>
+    <string name="config_timeZoneRulesUpdaterPackage" translatable="false">com.android.timezone.updater</string>
+    <string name="config_timeZoneRulesDataPackage" translatable="false">com.android.timezone.data</string>
+</resources>
+EOF_XML
+
+write_if_changed "${SETTINGS_OVERLAY_VALUES_DIR}/defaults.xml" <<EOF_XML
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <bool name="def_device_provisioned">true</bool>
+    <bool name="def_user_setup_complete">true</bool>
+    <bool name="def_lockscreen_disabled">true</bool>
+    <integer name="def_screen_off_timeout">2147483647</integer>
+    <string name="def_immersive_mode_confirmations" translatable="false">confirmed</string>
+</resources>
+EOF_XML
+
+{
+cat <<EOF_MK
+# Rosie local Home Assistant kiosk additions for Shield K1.
+DEVICE_PACKAGE_OVERLAYS += vendor/rosie/overlay
+
+PRODUCT_PROPERTY_OVERRIDES += \\
+    persist.sys.usb.config=mtp,adb \\
+    persist.service.adb.enable=1 \\
+    persist.debug.wfd.enable=0 \\
+    ro.lockscreen.disable.default=1 \\
+    fw.max_users=1 \\
+    fw.show_multiuserui=0 \\
+    ro.setupwizard.mode=DISABLED
+
+EOF_MK
+
+if [[ -n "${ADB_PUBLIC_KEY:-}" ]]; then
+cat <<EOF_MK
+PRODUCT_COPY_FILES += \\
+    vendor/rosie/adb/adb_keys:root/adb_keys
+
+EOF_MK
+fi
+
+cat <<EOF_MK
+PRODUCT_PACKAGES += \\
+    ${HA_MODULE} \\
+    ${BROWSER_MODULE} \\
+    ${KIOSK_LAUNCHER_MODULE}
+
+PRODUCT_PACKAGES := \$(filter-out ${KIOSK_REMOVE_MODULES},\$(PRODUCT_PACKAGES))
+EOF_MK
+} | write_if_changed "${PRODUCT_DIR}/rosie_kiosk_tablet.mk"
+
+write_if_changed "${PRODUCT_DIR}/rosie_kiosk_emulator.mk" <<EOF_MK
+# Rosie local Home Assistant kiosk additions for emulator validation.
+\$(call inherit-product-if-exists, vendor/lineage/config/lineage_sdk_common.mk)
+DEVICE_PACKAGE_OVERLAYS += vendor/lineage/overlay/common vendor/rosie/overlay
+
+PRODUCT_PROPERTY_OVERRIDES += \\
+    persist.sys.usb.config=mtp,adb \\
+    persist.service.adb.enable=1 \\
+    persist.debug.wfd.enable=0 \\
+    ro.lockscreen.disable.default=1 \\
+    fw.max_users=1 \\
+    fw.show_multiuserui=0 \\
+    ro.setupwizard.mode=DISABLED
+
+PRODUCT_PACKAGES += \\
+    LineageSettingsProvider \\
+    ${HA_MODULE} \\
+    ${EMULATOR_BROWSER_MODULE} \\
+    ${KIOSK_LAUNCHER_MODULE}
+
+PRODUCT_PACKAGES := \$(filter-out ${KIOSK_REMOVE_MODULES},\$(PRODUCT_PACKAGES))
+EOF_MK
+
+append_product_include() {
+  local makefile="$1"
+  local product_include="$2"
+  local path="${ANDROID_ROOT}/${makefile}"
+  local include_line="\$(call inherit-product-if-exists, ${product_include})"
+  local legacy_include="\$(call inherit-product-if-exists, vendor/rosie/product/rosie_kiosk.mk)"
+
+  if [[ ! -f "${path}" ]]; then
+    echo "missing product makefile: ${makefile}" >&2
+    return 1
+  fi
+
+  if grep -Fq "${legacy_include}" "${path}"; then
+    grep -Fvx "${legacy_include}" "${path}" > "${path}.rosie-tmp"
+    mv "${path}.rosie-tmp" "${path}"
+  fi
+
+  if ! grep -Fq "${include_line}" "${path}"; then
+    {
+      printf '\n# Rosie kiosk product additions.\n'
+      printf '%s\n' "${include_line}"
+    } >> "${path}"
+  fi
+}
+
+append_product_include "${TABLET_PRODUCT_MK}" "vendor/rosie/product/rosie_kiosk_tablet.mk"
+append_product_include "${EMULATOR_PRODUCT_MK}" "vendor/rosie/product/rosie_kiosk_emulator.mk"

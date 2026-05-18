@@ -1,0 +1,63 @@
+version: "3"
+
+vars:
+  PROFILE: '{{.PROFILE | default "profiles/shield-k1-lineage15-dev.yaml"}}'
+  PROFILE_OVERLAY: '{{.PROFILE_OVERLAY | default ""}}'
+  BUILD_DIR: '{{.BUILD_DIR | default ""}}'
+  SERIAL: '{{.SERIAL | default ""}}'
+  INSTALL_MODE: '{{.INSTALL_MODE | default ""}}'
+  ALLOW_DESTRUCTIVE: '{{.ALLOW_DESTRUCTIVE | default "0"}}'
+  DRY_RUN: '{{.DRY_RUN | default "0"}}'
+
+tasks:
+  profile-lint:
+    cmds:
+      - make profile-lint PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  pin-inputs:
+    cmds:
+      - make pin-inputs PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  validate-inputs:
+    cmds:
+      - make validate-inputs PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  preflight:
+    cmds:
+      - make preflight PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  test:
+    cmds:
+      - make test PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  build-runner:
+    cmds:
+      - make build-runner PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  sync-sources:
+    cmds:
+      - make sync-sources PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  extract-blobs:
+    cmds:
+      - make extract-blobs PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} SERIAL={{.SERIAL}}
+  build-images:
+    cmds:
+      - make build-images PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
+  validate-emulator:
+    cmds:
+      - make validate-emulator PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}}
+  publish-flash-bundle:
+    cmds:
+      - make publish-flash-bundle PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}}
+  device-preflight:
+    cmds:
+      - make device-preflight PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}} SERIAL={{.SERIAL}}
+  device-snapshot:
+    cmds:
+      - make device-snapshot PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}} SERIAL={{.SERIAL}}
+  deploy-tablet:
+    cmds:
+      - make deploy-tablet PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}} SERIAL={{.SERIAL}} INSTALL_MODE={{.INSTALL_MODE}} ALLOW_DESTRUCTIVE={{.ALLOW_DESTRUCTIVE}} DRY_RUN={{.DRY_RUN}}
+  validate-tablet:
+    cmds:
+      - make validate-tablet PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}} SERIAL={{.SERIAL}}
+  collect-device-logs:
+    cmds:
+      - make collect-device-logs PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}} BUILD_DIR={{.BUILD_DIR}} SERIAL={{.SERIAL}}
+  full-pipeline:
+    cmds:
+      - make full-pipeline PROFILE={{.PROFILE}} PROFILE_OVERLAY={{.PROFILE_OVERLAY}}
