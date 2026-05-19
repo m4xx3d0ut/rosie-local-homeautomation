@@ -11,6 +11,9 @@ set -euo pipefail
 : "${BROWSER_APK:?BROWSER_APK is required}"
 : "${EMULATOR_BROWSER_MODULE:?EMULATOR_BROWSER_MODULE is required}"
 : "${EMULATOR_BROWSER_APK:?EMULATOR_BROWSER_APK is required}"
+HA_BROWSER_MODULE="${HA_BROWSER_MODULE:-}"
+HA_BROWSER_PACKAGE="${HA_BROWSER_PACKAGE:-}"
+HA_BROWSER_APK="${HA_BROWSER_APK:-}"
 KIOSK_LAUNCHER_MODULE="${KIOSK_LAUNCHER_MODULE:-RosieKioskLauncher}"
 KIOSK_LAUNCHER_PACKAGE="${KIOSK_LAUNCHER_PACKAGE:-local.rosie.kiosk}"
 KIOSK_REMOVE_MODULES="${KIOSK_REMOVE_MODULES:-}"
@@ -42,9 +45,15 @@ KIOSK_BUTTON_TEXT_SIZE_SP="${KIOSK_BUTTON_TEXT_SIZE_SP:-22}"
 KIOSK_BUTTON_RADIUS_DP="${KIOSK_BUTTON_RADIUS_DP:-6}"
 KIOSK_BUTTON_MIN_HEIGHT_DP="${KIOSK_BUTTON_MIN_HEIGHT_DP:-68}"
 KIOSK_BUTTON_WIDTH_DP="${KIOSK_BUTTON_WIDTH_DP:-520}"
+KIOSK_HA_URL="${KIOSK_HA_URL:-}"
+KIOSK_BROWSER_URL="${KIOSK_BROWSER_URL:-}"
+KIOSK_HA_BROWSER_PACKAGE="${KIOSK_HA_BROWSER_PACKAGE:-${HA_BROWSER_PACKAGE:-${BROWSER_PACKAGE}}}"
+SYSTEM_UI_NIGHT_MODE="${SYSTEM_UI_NIGHT_MODE:-yes}"
+SYSTEM_UI_NIGHT_MODE_VALUE="${SYSTEM_UI_NIGHT_MODE_VALUE:-2}"
 export \
   HA_PACKAGE \
   BROWSER_PACKAGE \
+  HA_BROWSER_PACKAGE \
   KIOSK_LAUNCHER_PACKAGE \
   KIOSK_TITLE \
   KIOSK_SUBTITLE \
@@ -72,7 +81,8 @@ export \
   KIOSK_BUTTON_TEXT_SIZE_SP \
   KIOSK_BUTTON_RADIUS_DP \
   KIOSK_BUTTON_MIN_HEIGHT_DP \
-  KIOSK_BUTTON_WIDTH_DP
+  KIOSK_BUTTON_WIDTH_DP \
+  KIOSK_HA_BROWSER_PACKAGE
 
 ROSIE_VENDOR="${ANDROID_ROOT}/vendor/rosie"
 APP_DIR="${ROSIE_VENDOR}/prebuilt_apps"
@@ -81,6 +91,7 @@ PRODUCT_DIR="${ROSIE_VENDOR}/product"
 ADB_DIR="${ROSIE_VENDOR}/adb"
 OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/core/res/res/values"
 SETTINGS_OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/packages/SettingsProvider/res/values"
+ROOT_ACCESS="${ROOT_ACCESS:-}"
 
 mkdir -p \
   "${APP_DIR}/${HA_MODULE}" \
@@ -94,10 +105,20 @@ mkdir -p \
   "${ADB_DIR}" \
   "${OVERLAY_VALUES_DIR}" \
   "${SETTINGS_OVERLAY_VALUES_DIR}"
+if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${EMULATOR_BROWSER_MODULE}" ]]; then
+  mkdir -p "${APP_DIR}/${HA_BROWSER_MODULE}"
+fi
 cp "${REPO_ROOT}/${HA_APK}" "${APP_DIR}/${HA_MODULE}/${HA_MODULE}.apk"
 cp "${REPO_ROOT}/${BROWSER_APK}" "${APP_DIR}/${BROWSER_MODULE}/${BROWSER_MODULE}.apk"
 if [[ "${EMULATOR_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
   cp "${REPO_ROOT}/${EMULATOR_BROWSER_APK}" "${APP_DIR}/${EMULATOR_BROWSER_MODULE}/${EMULATOR_BROWSER_MODULE}.apk"
+fi
+if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${EMULATOR_BROWSER_MODULE}" ]]; then
+  if [[ -z "${HA_BROWSER_APK}" || ! -f "${REPO_ROOT}/${HA_BROWSER_APK}" ]]; then
+    echo "missing Home Assistant browser APK: ${REPO_ROOT}/${HA_BROWSER_APK}" >&2
+    exit 1
+  fi
+  cp "${REPO_ROOT}/${HA_BROWSER_APK}" "${APP_DIR}/${HA_BROWSER_MODULE}/${HA_BROWSER_MODULE}.apk"
 fi
 if [[ -n "${ADB_PUBLIC_KEY:-}" ]]; then
   if [[ ! -f "${REPO_ROOT}/${ADB_PUBLIC_KEY}" ]]; then
@@ -274,6 +295,21 @@ LOCAL_PRODUCT_MODULE := true
 include \$(BUILD_PREBUILT)
 EOF_MK
 
+if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${EMULATOR_BROWSER_MODULE}" ]]; then
+cat <<EOF_MK
+
+include \$(CLEAR_VARS)
+LOCAL_MODULE := ${HA_BROWSER_MODULE}
+LOCAL_SRC_FILES := ${HA_BROWSER_MODULE}/${HA_BROWSER_MODULE}.apk
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_SUFFIX := \$(COMMON_ANDROID_PACKAGE_SUFFIX)
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_MODULE_TAGS := optional
+LOCAL_PRODUCT_MODULE := true
+include \$(BUILD_PREBUILT)
+EOF_MK
+fi
+
 if [[ "${EMULATOR_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
 cat <<EOF_MK
 include \$(CLEAR_VARS)
@@ -345,7 +381,7 @@ EOF_XML
 write_if_changed "${KIOSK_DIR}/res/values/styles.xml" <<EOF_XML
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowFullscreen">true</item>
@@ -422,6 +458,7 @@ import android.graphics.drawable.StateListDrawable;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Browser;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -437,6 +474,7 @@ import android.widget.VideoView;
 public class LauncherActivity extends Activity {{
     private static final String HA_PACKAGE = {j(os.environ["HA_PACKAGE"])};
     private static final String BROWSER_PACKAGE = {j(os.environ["BROWSER_PACKAGE"])};
+    private static final String HA_BROWSER_PACKAGE = {j(os.environ["KIOSK_HA_BROWSER_PACKAGE"])};
     private static final String TITLE = {j(os.environ["KIOSK_TITLE"])};
     private static final String SUBTITLE = {j(os.environ["KIOSK_SUBTITLE"])};
     private static final String FONT_FAMILY = {j(os.environ["KIOSK_FONT_FAMILY"])};
@@ -464,6 +502,8 @@ public class LauncherActivity extends Activity {{
     private static final int BUTTON_RADIUS_DP = {i("KIOSK_BUTTON_RADIUS_DP")};
     private static final int BUTTON_MIN_HEIGHT_DP = {i("KIOSK_BUTTON_MIN_HEIGHT_DP")};
     private static final int BUTTON_WIDTH_DP = {i("KIOSK_BUTTON_WIDTH_DP")};
+    private static final String HA_URL = {j(os.environ["KIOSK_HA_URL"])};
+    private static final String BROWSER_URL = {j(os.environ["KIOSK_BROWSER_URL"])};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
@@ -538,8 +578,8 @@ public class LauncherActivity extends Activity {{
         subtitleParams.setMargins(0, dp(10), 0, dp(36));
         content.addView(subtitle, subtitleParams);
 
-        content.addView(appButton(HA_LABEL, HA_PACKAGE, typeface));
-        content.addView(appButton(BROWSER_LABEL, BROWSER_PACKAGE, typeface));
+        content.addView(appButton(HA_LABEL, "ha", typeface));
+        content.addView(appButton(BROWSER_LABEL, "browser", typeface));
         FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -627,7 +667,7 @@ public class LauncherActivity extends Activity {{
                 Color.parseColor(TEXT_SHADOW_COLOR));
     }}
 
-    private Button appButton(String label, final String packageName, Typeface typeface) {{
+    private Button appButton(String label, final String action, Typeface typeface) {{
         Button button = new Button(this);
         button.setText(label);
         button.setTextColor(Color.parseColor(BUTTON_TEXT_COLOR));
@@ -644,7 +684,11 @@ public class LauncherActivity extends Activity {{
         button.setOnClickListener(new View.OnClickListener() {{
             @Override
             public void onClick(View view) {{
-                launchPackage(packageName);
+                if ("ha".equals(action)) {{
+                    launchHomeAssistant();
+                }} else {{
+                    launchBrowser();
+                }}
             }}
         }});
         int available = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(128));
@@ -683,6 +727,126 @@ public class LauncherActivity extends Activity {{
         startActivity(intent);
     }}
 
+    private void launchHomeAssistant() {{
+        if (HA_URL.length() > 0) {{
+            boolean isolatedBrowser = shouldIsolateHomeAssistantBrowser();
+            launchUrl(HA_URL, HA_BROWSER_PACKAGE, isolatedBrowser, false, !isolatedBrowser);
+            return;
+        }}
+        launchPackage(HA_PACKAGE);
+    }}
+
+    private void launchBrowser() {{
+        if (BROWSER_URL.length() > 0) {{
+            launchUrl(BROWSER_URL, BROWSER_PACKAGE, false, true, false);
+            return;
+        }}
+        launchPackage(BROWSER_PACKAGE);
+    }}
+
+    private boolean shouldIsolateHomeAssistantBrowser() {{
+        return HA_BROWSER_PACKAGE.length() > 0 && !HA_BROWSER_PACKAGE.equals(BROWSER_PACKAGE);
+    }}
+
+    private void launchUrl(String url, String preferredPackage, boolean isolatedTask, boolean createNewTab, boolean customTab) {{
+        if (customTab && launchFennecCustomTab(url, preferredPackage)) {{
+            return;
+        }}
+
+        if (createNewTab && launchFennecNewTab(url, preferredPackage)) {{
+            return;
+        }}
+
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        int flags = Intent.FLAG_ACTIVITY_NEW_TASK;
+        if (isolatedTask) {{
+            flags |= Intent.FLAG_ACTIVITY_CLEAR_TASK;
+        }} else if (!createNewTab) {{
+            flags |= Intent.FLAG_ACTIVITY_CLEAR_TOP;
+        }}
+        intent.addFlags(flags);
+        if (createNewTab) {{
+            intent.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
+        }}
+        if (preferredPackage.length() > 0) {{
+            intent.setPackage(preferredPackage);
+        }}
+        try {{
+            startActivity(intent);
+        }} catch (Exception firstError) {{
+            if (preferredPackage.length() > 0) {{
+                Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                fallback.addCategory(Intent.CATEGORY_BROWSABLE);
+                fallback.addFlags(flags);
+                if (createNewTab) {{
+                    fallback.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
+                }}
+                try {{
+                    startActivity(fallback);
+                    return;
+                }} catch (Exception ignored) {{
+                    // Fall through to the user-visible error below.
+                }}
+            }}
+            Toast.makeText(this, "URL is not available", Toast.LENGTH_SHORT).show();
+        }}
+    }}
+
+    private boolean launchFennecCustomTab(String url, String preferredPackage) {{
+        if (!isFenixBrowserPackage(preferredPackage)) {{
+            return false;
+        }}
+
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setPackage(preferredPackage);
+        Bundle customTabsExtras = new Bundle();
+        customTabsExtras.putBinder("android.support.customtabs.extra.SESSION", null);
+        intent.putExtras(customTabsExtras);
+        intent.putExtra("android.support.customtabs.extra.SHARE_MENU_ITEM", false);
+        intent.putExtra("android.support.customtabs.extra.TITLE_VISIBILITY", 1);
+        intent.putExtra("android.support.customtabs.extra.ENABLE_URLBAR_HIDING", true);
+        try {{
+            startActivity(intent);
+            return true;
+        }} catch (Exception ignored) {{
+            return false;
+        }}
+    }}
+
+    private boolean launchFennecNewTab(String url, String preferredPackage) {{
+        if (!isFenixBrowserPackage(preferredPackage)) {{
+            return false;
+        }}
+
+        String encodedUrl = Uri.encode(url);
+        String[] deepLinks = new String[] {{
+                "fenix://open?url=" + encodedUrl,
+                "firefox://open?url=" + encodedUrl,
+        }};
+        for (String deepLink : deepLinks) {{
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(deepLink));
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.setPackage(preferredPackage);
+            try {{
+                startActivity(intent);
+                return true;
+            }} catch (Exception ignored) {{
+                // Try the next Firefox-family deep link before falling back.
+            }}
+        }}
+        return false;
+    }}
+
+    private boolean isFenixBrowserPackage(String packageName) {{
+        return "org.mozilla.fennec_fdroid".equals(packageName)
+                || "org.mozilla.firefox".equals(packageName)
+                || "org.mozilla.fenix".equals(packageName);
+    }}
+
     private void hideSystemUi() {{
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -714,6 +878,7 @@ write_if_changed "${OVERLAY_VALUES_DIR}/config.xml" <<EOF_XML
     <bool name="config_timeZoneRulesUpdateTrackingEnabled">false</bool>
     <bool name="config_enableWifiDisplay">false</bool>
     <bool name="config_disableLockscreenByDefault">true</bool>
+    <integer name="config_defaultNightMode">${SYSTEM_UI_NIGHT_MODE_VALUE}</integer>
     <string name="config_timeZoneRulesUpdaterPackage" translatable="false">com.android.timezone.updater</string>
     <string name="config_timeZoneRulesDataPackage" translatable="false">com.android.timezone.data</string>
 </resources>
@@ -746,6 +911,14 @@ PRODUCT_PROPERTY_OVERRIDES += \\
 
 EOF_MK
 
+if [[ -n "${ROOT_ACCESS:-}" ]]; then
+cat <<EOF_MK
+PRODUCT_PROPERTY_OVERRIDES += \\
+    persist.sys.root_access=${ROOT_ACCESS}
+
+EOF_MK
+fi
+
 if [[ -n "${ADB_PUBLIC_KEY:-}" ]]; then
 cat <<EOF_MK
 PRODUCT_COPY_FILES += \\
@@ -758,6 +931,13 @@ cat <<EOF_MK
 PRODUCT_PACKAGES += \\
     ${HA_MODULE} \\
     ${BROWSER_MODULE} \\
+EOF_MK
+if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
+cat <<EOF_MK
+    ${HA_BROWSER_MODULE} \\
+EOF_MK
+fi
+cat <<EOF_MK
     ${KIOSK_LAUNCHER_MODULE}
 
 PRODUCT_PACKAGES := \$(filter-out ${KIOSK_REMOVE_MODULES},\$(PRODUCT_PACKAGES))
