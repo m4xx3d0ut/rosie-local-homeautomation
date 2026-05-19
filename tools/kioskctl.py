@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import yaml
@@ -33,6 +34,25 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".3gp", ".webm"}
 BACKGROUND_TYPES = {"color", "image", "video"}
 BACKGROUND_FITS = {"cover", "contain", "height", "stretch"}
+UI_NIGHT_MODE_VALUES = {
+    "auto": "0",
+    "0": "0",
+    "no": "1",
+    "light": "1",
+    "off": "1",
+    "1": "1",
+    "yes": "2",
+    "dark": "2",
+    "on": "2",
+    "true": "2",
+    "2": "2",
+    "false": "1",
+}
+UI_NIGHT_MODE_NAMES = {
+    "0": "auto",
+    "1": "no",
+    "2": "yes",
+}
 DEFAULT_KIOSK_THEME: dict[str, Any] = {
     "title": "Rosie Kiosk",
     "subtitle": "Home Assistant and browser access",
@@ -432,6 +452,33 @@ def deployment_config(profile: dict[str, Any]) -> dict[str, Any]:
     return config if isinstance(config, dict) else {}
 
 
+def debug_config(profile: dict[str, Any]) -> dict[str, Any]:
+    config = profile.get("debug")
+    return config if isinstance(config, dict) else {}
+
+
+ROOT_ACCESS_VALUES = {
+    "disabled": "",
+    "none": "0",
+    "off": "0",
+    "apps": "1",
+    "adb": "2",
+    "all": "3",
+}
+
+
+def root_access_value(profile: dict[str, Any]) -> str:
+    raw = debug_config(profile).get("root_access", "")
+    if raw is None or raw == "":
+        return ""
+    value = str(raw).strip().lower()
+    if value in ROOT_ACCESS_VALUES:
+        return ROOT_ACCESS_VALUES[value]
+    if value in {"0", "1", "2", "3"}:
+        return value
+    raise ValueError("debug.root_access must be one of: disabled, apps, adb, all")
+
+
 def kiosk_config(profile: dict[str, Any]) -> dict[str, Any]:
     config = profile.get("kiosk")
     return config if isinstance(config, dict) else {}
@@ -455,6 +502,23 @@ def kiosk_remove_packages(profile: dict[str, Any]) -> list[str]:
     return [str(package) for package in kiosk_config(profile).get("remove_packages", [])]
 
 
+def system_config(profile: dict[str, Any]) -> dict[str, Any]:
+    config = profile.get("system")
+    return config if isinstance(config, dict) else {}
+
+
+def ui_night_mode_value(profile: dict[str, Any]) -> str:
+    raw = system_config(profile).get("ui_night_mode", "yes")
+    value = str(raw).strip().lower()
+    if value not in UI_NIGHT_MODE_VALUES:
+        raise ValueError("system.ui_night_mode must be one of: auto, no, yes")
+    return UI_NIGHT_MODE_VALUES[value]
+
+
+def ui_night_mode_name(profile: dict[str, Any]) -> str:
+    return UI_NIGHT_MODE_NAMES[ui_night_mode_value(profile)]
+
+
 def kiosk_theme(profile: dict[str, Any]) -> dict[str, Any]:
     theme = kiosk_config(profile).get("theme")
     if theme is None:
@@ -462,6 +526,31 @@ def kiosk_theme(profile: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(theme, dict):
         raise ValueError("kiosk.theme must be a mapping")
     return deep_merge(DEFAULT_KIOSK_THEME, theme)
+
+
+def kiosk_launch(profile: dict[str, Any]) -> dict[str, str]:
+    launch = kiosk_config(profile).get("launch")
+    if launch is None:
+        launch = {}
+    if not isinstance(launch, dict):
+        raise ValueError("kiosk.launch must be a mapping")
+    apps = profile.get("apps") or {}
+    ha_browser = apps.get("home_assistant_browser") or {}
+    if not isinstance(ha_browser, dict):
+        ha_browser = {}
+    browser = apps.get("browser") or {}
+    if not isinstance(browser, dict):
+        browser = {}
+    return {
+        "home_assistant_url": str(launch.get("home_assistant_url") or ""),
+        "browser_url": str(launch.get("browser_url") or ""),
+        "home_assistant_browser_package": str(
+            launch.get("home_assistant_browser_package")
+            or ha_browser.get("package")
+            or browser.get("package")
+            or ""
+        ),
+    }
 
 
 def bool_string(value: Any) -> str:
@@ -478,6 +567,7 @@ def theme_background_path(theme: dict[str, Any]) -> str:
 
 def kiosk_theme_env(profile: dict[str, Any]) -> dict[str, str]:
     theme = kiosk_theme(profile)
+    launch = kiosk_launch(profile)
     background = theme["background"]
     text = theme["text"]
     buttons = theme["buttons"]
@@ -510,6 +600,9 @@ def kiosk_theme_env(profile: dict[str, Any]) -> dict[str, str]:
         "KIOSK_BUTTON_RADIUS_DP": str(buttons["radius_dp"]),
         "KIOSK_BUTTON_MIN_HEIGHT_DP": str(buttons["min_height_dp"]),
         "KIOSK_BUTTON_WIDTH_DP": str(buttons["width_dp"]),
+        "KIOSK_HA_URL": str(launch["home_assistant_url"]),
+        "KIOSK_BROWSER_URL": str(launch["browser_url"]),
+        "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
     }
 
 
@@ -596,6 +689,17 @@ def adb_shell(
     return runner.run(["adb", "-s", serial, "shell", *command], check=check, timeout=timeout)
 
 
+def adb_shell_script(
+    runner: CommandRunner,
+    serial: str,
+    script: str,
+    *,
+    check: bool = True,
+    timeout: int | None = None,
+) -> CommandResult:
+    return adb_shell(runner, serial, [f"sh -c {shlex.quote(script)}"], check=check, timeout=timeout)
+
+
 def adb_getprop(runner: CommandRunner, serial: str, key: str) -> str:
     result = adb_shell(runner, serial, ["getprop", key], check=False)
     return result.stdout.strip().replace("\r", "")
@@ -644,6 +748,14 @@ def ensure_adb_root(runner: CommandRunner, *, serial: str) -> None:
         allowed_states={"device"},
         timeout_seconds=60,
     )
+    uid = adb_shell(runner, serial, ["id", "-u"], check=False, timeout=15).stdout.strip()
+    if uid != "0":
+        root_access = adb_getprop(runner, serial, "persist.sys.root_access") or "<unset>"
+        adb_root = adb_getprop(runner, serial, "lineage.service.adb.root") or "<unset>"
+        raise DeviceError(
+            f"adb root did not take effect for {serial}; id -u={uid or '<empty>'}, "
+            f"persist.sys.root_access={root_access}, lineage.service.adb.root={adb_root}"
+        )
 
 
 def wait_for_adb_state(
@@ -753,6 +865,18 @@ def collect_basic_device_evidence(
             ["settings", "get", "system", "screen_off_timeout"],
             check=False,
         ).stdout.strip(),
+        "ui_night_mode": adb_shell(
+            runner,
+            serial,
+            ["settings", "get", "secure", "ui_night_mode"],
+            check=False,
+        ).stdout.strip(),
+        "uimode_night": adb_shell(
+            runner,
+            serial,
+            ["cmd", "uimode", "night"],
+            check=False,
+        ).stdout.strip(),
     }
     (out_dir / "settings-summary.json").write_text(
         json.dumps(settings, indent=2, sort_keys=True) + "\n",
@@ -799,6 +923,132 @@ def collect_basic_device_evidence(
     }
 
 
+WIFI_BACKUP_DEVICE_PATH = "/data/local/tmp/rosie-wifi-backup.tar"
+WIFI_BACKUP_EXCLUDE_DEVICE_PATH = "/data/local/tmp/rosie-wifi-backup.exclude"
+
+
+def default_wifi_backup_path(build_dir: Path | None, serial: str) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if build_dir:
+        return device_validation_dir(build_dir, serial) / f"wifi-backup-{stamp}.tar"
+    return ROOT / ".work" / "device-wifi" / serial / f"wifi-backup-{stamp}.tar"
+
+
+def latest_wifi_backup_path(build_dir: Path | None, serial: str) -> Path:
+    candidates: list[Path] = []
+    if build_dir:
+        candidates.extend(device_validation_dir(build_dir, serial).glob("wifi-backup-*.tar"))
+    candidates.extend((ROOT / ".work" / "device-wifi" / serial).glob("wifi-backup-*.tar"))
+    if not candidates:
+        raise FileNotFoundError("no Wi-Fi backup found; pass WIFI_BACKUP_PATH=<path>")
+    return sorted(candidates, key=lambda path: path.stat().st_mtime)[-1]
+
+
+def backup_wifi_config(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    output_path: Path,
+) -> Path:
+    ensure_adb_root(runner, serial=serial)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    script = f"""
+set -eu
+exclude={shlex.quote(WIFI_BACKUP_EXCLUDE_DEVICE_PATH)}
+cleanup() {{
+  rm -f "$exclude"
+  svc wifi enable || true
+}}
+trap cleanup EXIT
+svc wifi disable || true
+rm -f {shlex.quote(WIFI_BACKUP_DEVICE_PATH)}
+printf 'data/misc/wifi/sockets\\ndata/misc/wifi/sockets/*\\n' > "$exclude"
+paths=""
+for p in /data/misc/wifi /data/misc_ce/0/wifi /data/misc_de/0/wifi; do
+  if [ -e "$p" ]; then
+    paths="$paths ${{p#/}}"
+  fi
+done
+if [ -z "$paths" ]; then
+  echo "no Wi-Fi config paths found" >&2
+  exit 1
+fi
+cd /
+tar -cpf {shlex.quote(WIFI_BACKUP_DEVICE_PATH)} -X "$exclude" $paths
+chmod 0600 {shlex.quote(WIFI_BACKUP_DEVICE_PATH)}
+"""
+    result = adb_shell_script(runner, serial, script, check=False, timeout=60)
+    if result.returncode != 0:
+        raise DeviceError(f"Wi-Fi backup failed: {result.stderr or result.stdout}")
+    pull = runner.run(
+        ["adb", "-s", serial, "pull", WIFI_BACKUP_DEVICE_PATH, str(output_path)],
+        check=False,
+        timeout=60,
+    )
+    adb_shell(runner, serial, ["rm", "-f", WIFI_BACKUP_DEVICE_PATH], check=False, timeout=15)
+    if pull.returncode != 0 or not output_path.exists():
+        raise DeviceError(f"failed to pull Wi-Fi backup: {pull.stderr or pull.stdout}")
+    return output_path
+
+
+def restore_wifi_config(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    input_path: Path,
+    reboot: bool = True,
+) -> None:
+    if not input_path.exists():
+        raise FileNotFoundError(f"Wi-Fi backup not found: {input_path}")
+    ensure_adb_root(runner, serial=serial)
+    push = runner.run(
+        ["adb", "-s", serial, "push", str(input_path), WIFI_BACKUP_DEVICE_PATH],
+        check=False,
+        timeout=60,
+    )
+    if push.returncode != 0:
+        raise DeviceError(f"failed to push Wi-Fi backup: {push.stderr or push.stdout}")
+    script = f"""
+set -eu
+cleanup() {{
+  rm -f {shlex.quote(WIFI_BACKUP_DEVICE_PATH)}
+  svc wifi enable || true
+}}
+trap cleanup EXIT
+svc wifi disable || true
+cd /
+tar -xpf {shlex.quote(WIFI_BACKUP_DEVICE_PATH)}
+for p in /data/misc/wifi /data/misc_ce/0/wifi /data/misc_de/0/wifi; do
+  if [ -e "$p" ]; then
+    restorecon -RF "$p" 2>/dev/null || true
+  fi
+done
+"""
+    result = adb_shell_script(runner, serial, script, check=False, timeout=60)
+    if result.returncode != 0:
+        raise DeviceError(f"Wi-Fi restore failed: {result.stderr or result.stdout}")
+    if reboot:
+        send_reboot_command(runner, ["adb", "-s", serial, "reboot"], check=False)
+
+
+def apply_runtime_system_defaults(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    profile: dict[str, Any],
+) -> None:
+    mode = ui_night_mode_name(profile)
+    result = adb_shell(
+        runner,
+        serial,
+        ["cmd", "uimode", "night", mode],
+        check=False,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise DeviceError(f"failed to set Android UI night mode: {result.stderr or result.stdout}")
+
+
 def validate_tablet_state(
     runner: CommandRunner,
     *,
@@ -823,6 +1073,10 @@ def validate_tablet_state(
         package = profile["apps"][app_key]["package"]
         if f"package:{package}" not in packages_text:
             failures.append(f"missing package: {package}")
+    if "home_assistant_browser" in profile["apps"]:
+        package = str(profile["apps"]["home_assistant_browser"]["package"])
+        if f"package:{package}" not in packages_text:
+            failures.append(f"missing Home Assistant browser package: {package}")
 
     launcher_package = kiosk_launcher(profile)["package"]
     if f"package:{launcher_package}" not in packages_text:
@@ -842,6 +1096,12 @@ def validate_tablet_state(
         failures.append("user_setup_complete is not set to 1")
     if evidence["settings"].get("lockscreen_disabled") != "1":
         failures.append("lockscreen.disabled is not set to 1")
+    expected_night = ui_night_mode_name(profile)
+    if evidence["settings"].get("uimode_night") != f"Night mode: {expected_night}":
+        failures.append(
+            "Android UI night mode is "
+            f"{evidence['settings'].get('uimode_night')}, expected Night mode: {expected_night}"
+        )
 
     if launcher_package not in evidence.get("home_resolve", ""):
         failures.append(f"HOME intent does not resolve to kiosk launcher: {launcher_package}")
@@ -930,8 +1190,15 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
                 raise ValueError(f"missing apps.{app_name}.{key}")
         if is_placeholder(app["sha256"]):
             warnings.append(f"apps.{app_name}.sha256 is still a placeholder")
+    if "home_assistant_browser" in apps:
+        app = require_mapping(apps, "home_assistant_browser")
+        for key in ("module", "package", "apk", "sha256"):
+            if key not in app:
+                raise ValueError(f"missing apps.home_assistant_browser.{key}")
+        if is_placeholder(app["sha256"]):
+            warnings.append("apps.home_assistant_browser.sha256 is still a placeholder")
     for app_name, app in apps.items():
-        if app_name in ("home_assistant", "browser"):
+        if app_name in ("home_assistant", "browser", "home_assistant_browser"):
             continue
         if not isinstance(app, dict):
             raise ValueError(f"apps.{app_name} must be a mapping")
@@ -982,12 +1249,22 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
             if key in kiosk and not isinstance(kiosk[key], list):
                 raise ValueError(f"kiosk.{key} must be a list")
         warnings.extend(validate_kiosk_theme_shape(kiosk_theme(profile)))
+        validate_kiosk_launch_shape(kiosk_launch(profile))
+
+    if "system" in profile:
+        require_mapping(profile, "system")
+    ui_night_mode_value(profile)
 
     if "deployment" in profile:
         deployment = require_mapping(profile, "deployment")
         for key in ("mode", "destructive_flags_required", "boot_timeout_seconds", "post_flash_timeout_seconds"):
             if key not in deployment:
                 raise ValueError(f"missing deployment.{key}")
+    if "debug" in profile:
+        debug = require_mapping(profile, "debug")
+        if "adb_public_key" in debug and not isinstance(debug["adb_public_key"], str):
+            raise ValueError("debug.adb_public_key must be a string")
+        root_access_value(profile)
     return warnings
 
 
@@ -1073,6 +1350,21 @@ def validate_kiosk_theme_shape(theme: dict[str, Any]) -> list[str]:
     for key in ("text_size_sp", "radius_dp", "min_height_dp", "width_dp"):
         validate_positive_int(buttons.get(key), f"kiosk.theme.buttons.{key}")
     return warnings
+
+
+def validate_optional_http_url(value: Any, name: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if not value:
+        return
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{name} must be an absolute http or https URL")
+
+
+def validate_kiosk_launch_shape(launch: dict[str, str]) -> None:
+    validate_optional_http_url(launch["home_assistant_url"], "kiosk.launch.home_assistant_url")
+    validate_optional_http_url(launch["browser_url"], "kiosk.launch.browser_url")
 
 
 def validate_apk_payload(profile: dict[str, Any], app_name: str, apk: Path) -> list[str]:
@@ -1214,6 +1506,7 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
     ccache = "/ccache" if container else str(repo_path(paths["ccache"]))
     artifacts = "/artifacts" if container else str(dist_root(profile))
     emulator_browser = profile["apps"].get("emulator_browser", profile["apps"]["browser"])
+    ha_browser = profile["apps"].get("home_assistant_browser", {})
     launcher = kiosk_launcher(profile)
     env = {
         "PROFILE_NAME": profile_name(profile),
@@ -1237,6 +1530,10 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
         "BROWSER_PACKAGE": str(profile["apps"]["browser"]["package"]),
         "BROWSER_APK": str(profile["apps"]["browser"]["apk"]),
         "BROWSER_SHA256": str(profile["apps"]["browser"]["sha256"]),
+        "HA_BROWSER_MODULE": str(ha_browser.get("module", "")),
+        "HA_BROWSER_PACKAGE": str(ha_browser.get("package", "")),
+        "HA_BROWSER_APK": str(ha_browser.get("apk", "")),
+        "HA_BROWSER_SHA256": str(ha_browser.get("sha256", "")),
         "EMULATOR_BROWSER_MODULE": str(emulator_browser["module"]),
         "EMULATOR_BROWSER_PACKAGE": str(emulator_browser["package"]),
         "EMULATOR_BROWSER_APK": str(emulator_browser["apk"]),
@@ -1247,7 +1544,10 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
         "KIOSK_REMOVE_PACKAGES": " ".join(kiosk_remove_packages(profile)),
         "BLOB_ARCHIVE": str(profile["blobs"]["archive"]),
         "BLOB_SHA256": str(profile["blobs"]["sha256"]),
-        "ADB_PUBLIC_KEY": str(profile.get("debug", {}).get("adb_public_key", "")),
+        "ADB_PUBLIC_KEY": str(debug_config(profile).get("adb_public_key", "")),
+        "ROOT_ACCESS": root_access_value(profile),
+        "SYSTEM_UI_NIGHT_MODE": ui_night_mode_name(profile),
+        "SYSTEM_UI_NIGHT_MODE_VALUE": ui_night_mode_value(profile),
         "ANDROID_API_LEVEL": str(profile.get("android", {}).get("api_level", "")),
         "ANDROID_ABI": str(profile.get("android", {}).get("abi", "")),
         "ANDROID_ROOT": android_root,
@@ -1416,6 +1716,8 @@ make publish-flash-bundle
                          Publish manual-flash output after validation passes.
 make device-preflight    Verify host adb/fastboot and the plugged-in tablet.
 make device-snapshot     Collect non-destructive device evidence.
+make device-apply-system-defaults
+                         Apply runtime defaults such as Android dark mode.
 make deploy-tablet       Gated USB deployment to the tablet.
 make validate-tablet     Collect post-flash tablet evidence.
 make collect-device-logs Collect logs and package/build evidence.
@@ -1869,6 +2171,82 @@ def cmd_device_snapshot(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_device_backup_wifi(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    validate_profile_shape(profile)
+    missing = missing_platform_tools()
+    if missing:
+        print(f"missing Android Platform Tools commands: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    build_dir = repo_path(args.build_dir) if args.build_dir else None
+    runner = CommandRunner()
+    try:
+        selected = select_single_device(
+            adb_devices(runner),
+            requested_serial=profile_device_serial(profile, args.serial),
+            allowed_states={"device"},
+            tool="adb",
+        )
+        serial = str(selected["serial"])
+        output = repo_path(args.output) if args.output else default_wifi_backup_path(build_dir, serial)
+        backup_wifi_config(runner, serial=serial, output_path=output)
+        print(f"Wi-Fi backup: {output}")
+        return 0
+    except (DeviceError, FileNotFoundError) as exc:
+        print(f"Wi-Fi backup failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_device_restore_wifi(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    validate_profile_shape(profile)
+    missing = missing_platform_tools()
+    if missing:
+        print(f"missing Android Platform Tools commands: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    build_dir = repo_path(args.build_dir) if args.build_dir else None
+    runner = CommandRunner()
+    try:
+        selected = select_single_device(
+            adb_devices(runner),
+            requested_serial=profile_device_serial(profile, args.serial),
+            allowed_states={"device"},
+            tool="adb",
+        )
+        serial = str(selected["serial"])
+        input_path = repo_path(args.input) if args.input else latest_wifi_backup_path(build_dir, serial)
+        restore_wifi_config(runner, serial=serial, input_path=input_path, reboot=not args.no_reboot)
+        print(f"Wi-Fi restored from: {input_path}")
+        return 0
+    except (DeviceError, FileNotFoundError) as exc:
+        print(f"Wi-Fi restore failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_device_apply_system_defaults(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    validate_profile_shape(profile)
+    missing = missing_platform_tools()
+    if missing:
+        print(f"missing Android Platform Tools commands: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    runner = CommandRunner()
+    try:
+        selected = select_single_device(
+            adb_devices(runner),
+            requested_serial=profile_device_serial(profile, args.serial),
+            allowed_states={"device"},
+            tool="adb",
+        )
+        serial = str(selected["serial"])
+        apply_runtime_system_defaults(runner, serial=serial, profile=profile)
+        print(f"Applied system defaults to {serial}: ui_night_mode={ui_night_mode_name(profile)}")
+        return 0
+    except DeviceError as exc:
+        print(f"apply system defaults failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def deployment_mode(profile: dict[str, Any], override: str | None) -> str:
     if override:
         return override
@@ -1972,6 +2350,7 @@ def cmd_deploy_tablet(args: argparse.Namespace) -> int:
     configured_serial = profile_device_serial(profile, args.serial)
     serial = configured_serial or ("<serial>" if args.dry_run else None)
     mode = deployment_mode(profile, args.install_mode)
+    destructive_mode = mode in {"first-install", "fastboot-first-install", "fastboot-image-install"}
     boot_img = system_img = None
     if mode == "fastboot-image-install":
         boot_img, system_img, recovery = find_manual_fastboot_images(manual)
@@ -2001,6 +2380,18 @@ def cmd_deploy_tablet(args: argparse.Namespace) -> int:
         runner = CommandRunner()
         out_dir = device_validation_dir(build_dir, serial)
         out_dir.mkdir(parents=True, exist_ok=True)
+        wifi_backup_path: Path | None = None
+        if args.wifi_backup and destructive_mode:
+            wifi_backup_path = repo_path(args.wifi_backup_path) if args.wifi_backup_path else default_wifi_backup_path(build_dir, serial)
+            select_single_device(
+                adb_devices(runner),
+                requested_serial=serial,
+                allowed_states={"device"},
+                tool="adb",
+            )
+            backup_wifi_config(runner, serial=serial, output_path=wifi_backup_path)
+        elif args.wifi_backup:
+            print(f"Wi-Fi backup skipped for non-destructive install mode: {mode}")
         payload = {
             "schema": "rosie-local-ha.device-deployment/v1",
             "status": "started",
@@ -2009,6 +2400,7 @@ def cmd_deploy_tablet(args: argparse.Namespace) -> int:
             "mode": mode,
             "lineage_zip": str(lineage_zip),
             "recovery": str(recovery),
+            "wifi_backup": str(wifi_backup_path) if wifi_backup_path else None,
         }
         write_json(out_dir / "DEVICE-DEPLOYMENT.json", payload)
 
@@ -2099,6 +2491,11 @@ def cmd_deploy_tablet(args: argparse.Namespace) -> int:
         if post_install_adb_reboot:
             send_reboot_command(runner, ["adb", "-s", serial, "reboot"], check=False)
         wait_for_boot_completed(runner, serial=serial, timeout_seconds=post_flash_timeout)
+        apply_runtime_system_defaults(runner, serial=serial, profile=profile)
+        if wifi_backup_path:
+            restore_wifi_config(runner, serial=serial, input_path=wifi_backup_path, reboot=True)
+            wait_for_boot_completed(runner, serial=serial, timeout_seconds=post_flash_timeout)
+            apply_runtime_system_defaults(runner, serial=serial, profile=profile)
         payload["status"] = "pass"
         payload["finished_at"] = now_iso()
         write_json(out_dir / "DEVICE-DEPLOYMENT.json", payload)
@@ -2206,6 +2603,9 @@ def build_parser() -> argparse.ArgumentParser:
         ("publish-flash-bundle", cmd_publish_flash_bundle),
         ("device-preflight", cmd_device_preflight),
         ("device-snapshot", cmd_device_snapshot),
+        ("device-backup-wifi", cmd_device_backup_wifi),
+        ("device-restore-wifi", cmd_device_restore_wifi),
+        ("device-apply-system-defaults", cmd_device_apply_system_defaults),
         ("deploy-tablet", cmd_deploy_tablet),
         ("validate-tablet", cmd_validate_tablet),
         ("collect-device-logs", cmd_collect_device_logs),
@@ -2218,6 +2618,8 @@ def build_parser() -> argparse.ArgumentParser:
             "publish-flash-bundle",
             "device-preflight",
             "device-snapshot",
+            "device-backup-wifi",
+            "device-restore-wifi",
             "deploy-tablet",
             "validate-tablet",
             "collect-device-logs",
@@ -2227,6 +2629,9 @@ def build_parser() -> argparse.ArgumentParser:
             "device-preflight",
             "device-snapshot",
             "extract-blobs",
+            "device-backup-wifi",
+            "device-restore-wifi",
+            "device-apply-system-defaults",
             "deploy-tablet",
             "validate-tablet",
             "collect-device-logs",
@@ -2235,6 +2640,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "deploy-tablet":
             cmd.add_argument("--allow-destructive", action="store_true")
             cmd.add_argument("--dry-run", action="store_true")
+            cmd.add_argument("--wifi-backup", action="store_true")
+            cmd.add_argument("--wifi-backup-path")
             cmd.add_argument(
                 "--install-mode",
                 choices=[
@@ -2245,6 +2652,11 @@ def build_parser() -> argparse.ArgumentParser:
                     "resume-sideload",
                 ],
             )
+        if name == "device-backup-wifi":
+            cmd.add_argument("--output")
+        if name == "device-restore-wifi":
+            cmd.add_argument("--input")
+            cmd.add_argument("--no-reboot", action="store_true")
         if name == "extract-blobs":
             cmd.add_argument("--no-pin", action="store_true")
         cmd.set_defaults(func=func)

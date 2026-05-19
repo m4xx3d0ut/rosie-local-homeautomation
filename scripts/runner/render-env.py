@@ -82,15 +82,86 @@ def theme_for(profile):
     return deep_merge(DEFAULT_THEME, theme)
 
 
+def launch_for(profile):
+    kiosk = profile.get("kiosk") or {}
+    launch = kiosk.get("launch") or {}
+    apps = profile.get("apps") or {}
+    ha_browser = apps.get("home_assistant_browser") or {}
+    browser = apps.get("browser") or {}
+    return {
+        "home_assistant_url": str(launch.get("home_assistant_url") or ""),
+        "browser_url": str(launch.get("browser_url") or ""),
+        "home_assistant_browser_package": str(
+            launch.get("home_assistant_browser_package")
+            or ha_browser.get("package")
+            or browser.get("package")
+            or ""
+        ),
+    }
+
+
+ROOT_ACCESS_VALUES = {
+    "disabled": "",
+    "none": "0",
+    "off": "0",
+    "apps": "1",
+    "adb": "2",
+    "all": "3",
+}
+UI_NIGHT_MODE_VALUES = {
+    "auto": "0",
+    "0": "0",
+    "no": "1",
+    "light": "1",
+    "off": "1",
+    "1": "1",
+    "yes": "2",
+    "dark": "2",
+    "on": "2",
+    "true": "2",
+    "2": "2",
+    "false": "1",
+}
+UI_NIGHT_MODE_NAMES = {
+    "0": "auto",
+    "1": "no",
+    "2": "yes",
+}
+
+
+def root_access_value(profile):
+    raw = (profile.get("debug") or {}).get("root_access", "")
+    if raw is None or raw == "":
+        return ""
+    value = str(raw).strip().lower()
+    if value in ROOT_ACCESS_VALUES:
+        return ROOT_ACCESS_VALUES[value]
+    return value
+
+
+def ui_night_mode_value(profile):
+    raw = (profile.get("system") or {}).get("ui_night_mode", "yes")
+    value = str(raw).strip().lower()
+    if value not in UI_NIGHT_MODE_VALUES:
+        raise ValueError("system.ui_night_mode must be one of: auto, no, yes")
+    return UI_NIGHT_MODE_VALUES[value]
+
+
+def ui_night_mode_name(profile):
+    return UI_NIGHT_MODE_NAMES[ui_night_mode_value(profile)]
+
+
 def env_for(profile, repo_root, container):
     paths = profile["paths"]
     android_root = "/android" if container else str((repo_root / paths["android_root"]).resolve())
     ccache = "/ccache" if container else str((repo_root / paths["ccache"]).resolve())
     artifacts = "/artifacts" if container else str((repo_root / paths["dist"]).resolve())
     emulator_browser = profile["apps"].get("emulator_browser", profile["apps"]["browser"])
+    ha_browser = profile["apps"].get("home_assistant_browser", {})
     kiosk = profile.get("kiosk", {})
     kiosk_launcher = kiosk.get("launcher", {})
     theme = theme_for(profile)
+    launch = launch_for(profile)
     background = theme["background"]
     text = theme["text"]
     buttons = theme["buttons"]
@@ -116,6 +187,10 @@ def env_for(profile, repo_root, container):
         "BROWSER_PACKAGE": str(profile["apps"]["browser"]["package"]),
         "BROWSER_APK": str(profile["apps"]["browser"]["apk"]),
         "BROWSER_SHA256": str(profile["apps"]["browser"]["sha256"]),
+        "HA_BROWSER_MODULE": str(ha_browser.get("module", "")),
+        "HA_BROWSER_PACKAGE": str(ha_browser.get("package", "")),
+        "HA_BROWSER_APK": str(ha_browser.get("apk", "")),
+        "HA_BROWSER_SHA256": str(ha_browser.get("sha256", "")),
         "EMULATOR_BROWSER_MODULE": str(emulator_browser["module"]),
         "EMULATOR_BROWSER_PACKAGE": str(emulator_browser["package"]),
         "EMULATOR_BROWSER_APK": str(emulator_browser["apk"]),
@@ -152,9 +227,15 @@ def env_for(profile, repo_root, container):
         "KIOSK_BUTTON_RADIUS_DP": str(buttons["radius_dp"]),
         "KIOSK_BUTTON_MIN_HEIGHT_DP": str(buttons["min_height_dp"]),
         "KIOSK_BUTTON_WIDTH_DP": str(buttons["width_dp"]),
+        "KIOSK_HA_URL": str(launch["home_assistant_url"]),
+        "KIOSK_BROWSER_URL": str(launch["browser_url"]),
+        "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
         "BLOB_ARCHIVE": str(profile["blobs"]["archive"]),
         "BLOB_SHA256": str(profile["blobs"]["sha256"]),
-        "ADB_PUBLIC_KEY": str(profile.get("debug", {}).get("adb_public_key", "")),
+        "ADB_PUBLIC_KEY": str((profile.get("debug") or {}).get("adb_public_key", "")),
+        "ROOT_ACCESS": root_access_value(profile),
+        "SYSTEM_UI_NIGHT_MODE": ui_night_mode_name(profile),
+        "SYSTEM_UI_NIGHT_MODE_VALUE": ui_night_mode_value(profile),
         "ANDROID_API_LEVEL": str(profile.get("android", {}).get("api_level", "")),
         "ANDROID_ABI": str(profile.get("android", {}).get("abi", "")),
         "ANDROID_ROOT": android_root,

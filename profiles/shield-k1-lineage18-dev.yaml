@@ -6,6 +6,9 @@ lineage:
   repo_url: https://github.com/LineageOS/android.git
   sync_jobs: 16
 
+system:
+  ui_night_mode: 'yes'
+
 targets:
   tablet:
     device: shieldtablet

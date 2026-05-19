@@ -203,11 +203,14 @@ device_provisioned="$("${ADB_BIN}" -s emulator-5554 shell settings get global de
 user_setup_complete="$("${ADB_BIN}" -s emulator-5554 shell settings get secure user_setup_complete | tr -d '\r')"
 lockscreen_disabled="$("${ADB_BIN}" -s emulator-5554 shell settings get secure lockscreen.disabled | tr -d '\r')"
 immersive_confirmations="$("${ADB_BIN}" -s emulator-5554 shell settings get secure immersive_mode_confirmations | tr -d '\r')"
+uimode_night="$("${ADB_BIN}" -s emulator-5554 shell cmd uimode night | tr -d '\r')"
 [[ "${device_provisioned}" == "1" ]] || fail "device_provisioned is ${device_provisioned}, expected 1"
 [[ "${user_setup_complete}" == "1" ]] || fail "user_setup_complete is ${user_setup_complete}, expected 1"
 [[ "${lockscreen_disabled}" == "1" ]] || fail "lockscreen.disabled is ${lockscreen_disabled}, expected 1"
 [[ "${immersive_confirmations}" == "confirmed" ]] \
   || fail "immersive_mode_confirmations is ${immersive_confirmations}, expected confirmed"
+[[ "${uimode_night}" == "Night mode: ${SYSTEM_UI_NIGHT_MODE}" ]] \
+  || fail "uimode night is ${uimode_night}, expected Night mode: ${SYSTEM_UI_NIGHT_MODE}"
 
 "${ADB_BIN}" -s emulator-5554 shell \
   cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME \

@@ -5,9 +5,11 @@ SERIAL ?=
 INSTALL_MODE ?=
 ALLOW_DESTRUCTIVE ?= 0
 DRY_RUN ?= 0
+WIFI_BACKUP ?= 0
+WIFI_BACKUP_PATH ?=
 PROFILE_ARGS = --profile "$(PROFILE)" $(if $(PROFILE_OVERLAY),--profile-overlay "$(PROFILE_OVERLAY)")
 
-.PHONY: help profile-lint pin-inputs validate-inputs preflight test build-runner sync-sources extract-blobs build-images validate-emulator publish-flash-bundle device-preflight device-snapshot deploy-tablet validate-tablet collect-device-logs full-pipeline clean
+.PHONY: help profile-lint pin-inputs validate-inputs preflight test build-runner sync-sources extract-blobs build-images validate-emulator publish-flash-bundle device-preflight device-snapshot device-backup-wifi device-restore-wifi deploy-tablet validate-tablet collect-device-logs full-pipeline clean
 
 help:
 	@python3 tools/kioskctl.py help
@@ -51,8 +53,17 @@ device-preflight:
 device-snapshot:
 	@python3 tools/kioskctl.py device-snapshot $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)")
 
+device-backup-wifi:
+	@python3 tools/kioskctl.py device-backup-wifi $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)") $(if $(WIFI_BACKUP_PATH),--output "$(WIFI_BACKUP_PATH)")
+
+device-restore-wifi:
+	@python3 tools/kioskctl.py device-restore-wifi $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)") $(if $(WIFI_BACKUP_PATH),--input "$(WIFI_BACKUP_PATH)")
+
+device-apply-system-defaults:
+	@python3 tools/kioskctl.py device-apply-system-defaults $(PROFILE_ARGS) $(if $(SERIAL),--serial "$(SERIAL)")
+
 deploy-tablet:
-	@ALLOW_DESTRUCTIVE="$(ALLOW_DESTRUCTIVE)" python3 tools/kioskctl.py deploy-tablet $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)") $(if $(INSTALL_MODE),--install-mode "$(INSTALL_MODE)") $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run)
+	@ALLOW_DESTRUCTIVE="$(ALLOW_DESTRUCTIVE)" python3 tools/kioskctl.py deploy-tablet $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)") $(if $(INSTALL_MODE),--install-mode "$(INSTALL_MODE)") $(if $(filter 1 true yes,$(DRY_RUN)),--dry-run) $(if $(filter 1 true yes,$(WIFI_BACKUP)),--wifi-backup) $(if $(WIFI_BACKUP_PATH),--wifi-backup-path "$(WIFI_BACKUP_PATH)")
 
 validate-tablet:
 	@python3 tools/kioskctl.py validate-tablet $(PROFILE_ARGS) $(if $(BUILD_DIR),--build-dir "$(BUILD_DIR)") $(if $(SERIAL),--serial "$(SERIAL)")

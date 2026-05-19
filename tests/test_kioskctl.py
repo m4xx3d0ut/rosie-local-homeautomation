@@ -24,6 +24,7 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(profile["profile"], "shield-k1-lineage15-dev")
         self.assertEqual(profile["lineage"]["branch"], "lineage-15.1")
         self.assertEqual(profile["targets"]["emulator"]["lunch"], "sdk_phone_x86-userdebug")
+        self.assertEqual(profile["system"]["ui_night_mode"], "yes")
         self.assertEqual(profile["apps"]["browser"]["package"], "org.mozilla.fennec_fdroid")
         self.assertEqual(profile["apps"]["emulator_browser"]["package"], "com.stoutner.privacybrowser.standard")
         self.assertEqual(profile["kiosk"]["launcher"]["package"], "local.rosie.kiosk")
@@ -49,6 +50,12 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(env["KIOSK_BUTTON_TEXT_SIZE_SP"], "22")
         self.assertEqual(env["KIOSK_BUTTON_RADIUS_DP"], "6")
         self.assertEqual(env["KIOSK_TEXT_SHADOW_COLOR"], "#99000000")
+        self.assertEqual(env["KIOSK_HA_URL"], "")
+        self.assertEqual(env["KIOSK_BROWSER_URL"], "")
+        self.assertEqual(env["KIOSK_HA_BROWSER_PACKAGE"], "org.mozilla.fennec_fdroid")
+        self.assertEqual(env["ROOT_ACCESS"], "")
+        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE"], "yes")
+        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE_VALUE"], "2")
 
     def test_profile_overlay_deep_merges_private_theme(self) -> None:
         work = kioskctl.ROOT / ".work" / "tests"
@@ -57,6 +64,8 @@ class KioskCtlTests(unittest.TestCase):
             overlay = Path(temp) / "site.yaml"
             overlay.write_text(
                 "kiosk:\n"
+                "  launch:\n"
+                "    home_assistant_url: http://192.168.29.111:8123/\n"
                 "  theme:\n"
                 "    title: Kitchen\n"
                 "    background:\n"
@@ -68,8 +77,74 @@ class KioskCtlTests(unittest.TestCase):
 
         self.assertEqual(profile["kiosk"]["theme"]["title"], "Kitchen")
         self.assertEqual(profile["kiosk"]["theme"]["background"]["scrim_color"], "#66000000")
+        self.assertEqual(profile["kiosk"]["launch"]["home_assistant_url"], "http://192.168.29.111:8123/")
         self.assertEqual(profile["kiosk"]["theme"]["buttons"]["radius_dp"], 6)
         self.assertEqual(profile["_profile_overlay_path"].split("/")[-1], "site.yaml")
+
+    def test_kiosk_launch_rejects_relative_urls(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["kiosk"]["launch"] = {"home_assistant_url": "/lovelace"}
+
+        with self.assertRaisesRegex(ValueError, "absolute http or https URL"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_debug_root_access_maps_adb_to_lineage_value(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["debug"] = {"root_access": "adb"}
+
+        warnings = kioskctl.validate_profile_shape(profile)
+        env = kioskctl.shell_env(profile, container=True)
+
+        self.assertEqual([], warnings)
+        self.assertEqual(env["ROOT_ACCESS"], "2")
+
+    def test_debug_root_access_rejects_unknown_value(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["debug"] = {"root_access": "sideways"}
+
+        with self.assertRaisesRegex(ValueError, "debug.root_access"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_system_ui_night_mode_rejects_unknown_value(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["system"] = {"ui_night_mode": "sideways"}
+
+        with self.assertRaisesRegex(ValueError, "system.ui_night_mode"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_home_assistant_browser_package_can_be_isolated(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["home_assistant_browser"] = {
+            "module": "FirefoxFocus",
+            "package": "org.mozilla.focus",
+            "apk": "inputs/apks/FirefoxFocus.apk",
+            "sha256": "REPLACE_WITH_FIREFOX_FOCUS_APK_SHA256",
+        }
+
+        env = kioskctl.shell_env(profile, container=True)
+
+        self.assertEqual(env["HA_BROWSER_MODULE"], "FirefoxFocus")
+        self.assertEqual(env["HA_BROWSER_PACKAGE"], "org.mozilla.focus")
+        self.assertEqual(env["KIOSK_HA_BROWSER_PACKAGE"], "org.mozilla.focus")
+
+    def test_adb_shell_script_quotes_remote_script_as_one_argument(self) -> None:
+        class FakeRunner:
+            def __init__(self) -> None:
+                self.argv: list[str] | None = None
+
+            def run(self, argv: list[str], *, check: bool = True, timeout: int | None = None) -> kioskctl.CommandResult:
+                self.argv = argv
+                return kioskctl.CommandResult(argv, 0, "", "")
+
+        runner = FakeRunner()
+
+        kioskctl.adb_shell_script(runner, "abc123", "echo one two\nsvc wifi disable", timeout=60)
+
+        self.assertIsNotNone(runner.argv)
+        self.assertEqual(runner.argv[:4], ["adb", "-s", "abc123", "shell"])
+        self.assertEqual(len(runner.argv), 5)
+        self.assertTrue(runner.argv[4].startswith("sh -c "))
+        self.assertIn("svc wifi disable", runner.argv[4])
 
     def test_overlay_pin_inputs_is_rejected(self) -> None:
         work = kioskctl.ROOT / ".work" / "tests"

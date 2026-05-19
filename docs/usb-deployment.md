@@ -32,7 +32,7 @@ make deploy-tablet BUILD_DIR=dist/<build-id> SERIAL=<serial> ALLOW_DESTRUCTIVE=1
 make validate-tablet BUILD_DIR=dist/<build-id> SERIAL=<serial>
 ```
 
-The default `first-install` flow erases `userdata` and `cache` before sideloading the validated image. This avoids stale settings from an older LineageOS build crashing first boot. Development images also set `persist.sys.usb.config=mtp,adb`, cap the kiosk build to one Android user with `fw.max_users=1`, disable timezone updater tracking, seed setup-complete settings, and install `RosieKioskLauncher` as HOME.
+The default `first-install` flow erases `userdata` and `cache` before sideloading the validated image. This avoids stale settings from an older LineageOS build crashing first boot. Development images also set `persist.sys.usb.config=mtp,adb`, cap the kiosk build to one Android user with `fw.max_users=1`, disable timezone updater tracking, seed setup-complete settings, default Android UI night mode to dark, and install `RosieKioskLauncher` as HOME.
 
 To authorize ADB before the first-boot UI is usable, generate `inputs/adb/host-adbkey.pub` and opt in from an ignored local overlay:
 
@@ -48,6 +48,59 @@ make deploy-tablet BUILD_DIR=dist/<build-id> SERIAL=<serial> DRY_RUN=1
 ```
 
 Use `INSTALL_MODE=update` only when preserving `/data` is intentional and the currently installed build is known to be compatible with the new image.
+
+## ADB Root For Automated Updates
+
+LineageOS 15.1 userdebug builds require root access to be enabled before `adb root` and `adb reboot sideload` work. For local development images, enable ADB-only root in an ignored profile overlay:
+
+```yaml
+debug:
+  root_access: adb
+  adb_public_key: inputs/adb/host-adbkey.pub
+```
+
+Then generate the ignored host key before building:
+
+```bash
+adb pubkey ~/.android/adbkey > inputs/adb/host-adbkey.pub
+```
+
+After that image is installed once, future non-wipe updates can use `INSTALL_MODE=update`.
+
+## Runtime System Defaults
+
+Fresh installs read `system.ui_night_mode` from the image overlay. Non-wipe updates preserve existing `/data` settings, so `deploy-tablet` also applies the profile value after Android boots. To apply the profile defaults without flashing:
+
+```bash
+make device-apply-system-defaults SERIAL=<serial> PROFILE_OVERLAY=profiles/local/site.yaml
+```
+
+## Wi-Fi Backup
+
+Wi-Fi backups require `adb root`, so they work after installing a development image with `debug.root_access: adb`. Back up Wi-Fi secrets before destructive flashes:
+
+```bash
+make device-backup-wifi SERIAL=<serial> BUILD_DIR=dist/<build-id>
+```
+
+Restore the latest backup after boot:
+
+```bash
+make device-restore-wifi SERIAL=<serial> BUILD_DIR=dist/<build-id>
+```
+
+For destructive deploys, `WIFI_BACKUP=1` backs up before erasing and restores after the flashed image boots:
+
+```bash
+make deploy-tablet \
+  BUILD_DIR=dist/<build-id> \
+  SERIAL=<serial> \
+  INSTALL_MODE=fastboot-image-install \
+  ALLOW_DESTRUCTIVE=1 \
+  WIFI_BACKUP=1
+```
+
+Wi-Fi backup tarballs contain PSKs. They are written under ignored build or work directories and must not be committed.
 
 If the tablet is already in bootloader/fastboot mode, start the same destructive first-install flow from there:
 
