@@ -3,7 +3,15 @@ debug:
   root_access: adb
   adb_public_key: inputs/adb/host-adbkey.pub
 system:
-  ui_night_mode: 'yes'
+  ui_night_mode: auto
+  # Optional root-backed keyboard theme; requires debug.root_access: adb.
+  # keyboard_theme: dark
+# Optional root-backed browser runtime defaults; requires debug.root_access: adb.
+# apps:
+#   browser:
+#     runtime_defaults:
+#       theme: dark
+#       website_color_scheme: dark
 # To isolate Home Assistant tabs from general browsing, add an optional
 # apps.home_assistant_browser entry that points at a second browser APK.
 kiosk:

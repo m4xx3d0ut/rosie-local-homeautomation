@@ -24,8 +24,10 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(profile["profile"], "shield-k1-lineage15-dev")
         self.assertEqual(profile["lineage"]["branch"], "lineage-15.1")
         self.assertEqual(profile["targets"]["emulator"]["lunch"], "sdk_phone_x86-userdebug")
-        self.assertEqual(profile["system"]["ui_night_mode"], "yes")
+        self.assertEqual(profile["system"]["ui_night_mode"], "auto")
+        self.assertNotIn("keyboard_theme", profile["system"])
         self.assertEqual(profile["apps"]["browser"]["package"], "org.mozilla.fennec_fdroid")
+        self.assertNotIn("runtime_defaults", profile["apps"]["browser"])
         self.assertEqual(profile["apps"]["emulator_browser"]["package"], "com.stoutner.privacybrowser.standard")
         self.assertEqual(profile["kiosk"]["launcher"]["package"], "local.rosie.kiosk")
         self.assertEqual(profile["kiosk"]["theme"]["background"]["type"], "color")
@@ -54,8 +56,8 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(env["KIOSK_BROWSER_URL"], "")
         self.assertEqual(env["KIOSK_HA_BROWSER_PACKAGE"], "org.mozilla.fennec_fdroid")
         self.assertEqual(env["ROOT_ACCESS"], "")
-        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE"], "yes")
-        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE_VALUE"], "2")
+        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE"], "auto")
+        self.assertEqual(env["SYSTEM_UI_NIGHT_MODE_VALUE"], "0")
 
     def test_profile_overlay_deep_merges_private_theme(self) -> None:
         work = kioskctl.ROOT / ".work" / "tests"
@@ -111,6 +113,107 @@ class KioskCtlTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "system.ui_night_mode"):
             kioskctl.validate_profile_shape(profile)
+
+    def test_system_keyboard_theme_rejects_unknown_value(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["system"] = {"keyboard_theme": "infrared"}
+
+        with self.assertRaisesRegex(ValueError, "system.keyboard_theme"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_keyboard_theme_defaults_to_stock_keyboard(self) -> None:
+        profile = kioskctl.load_profile(PROFILE)
+
+        self.assertEqual(kioskctl.keyboard_theme_name(profile), "default")
+        self.assertEqual(kioskctl.keyboard_theme_value(profile), "")
+
+    def test_keyboard_theme_can_map_dark_latinime_id(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["system"]["keyboard_theme"] = "dark"
+
+        self.assertEqual(kioskctl.keyboard_theme_name(profile), "dark")
+        self.assertEqual(kioskctl.keyboard_theme_value(profile), "4")
+
+    def test_browser_runtime_defaults_are_opt_in(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+
+        self.assertEqual([], kioskctl.browser_runtime_default_targets(profile))
+
+    def test_browser_runtime_defaults_resolve_to_fennec_dark_mode(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["browser"]["runtime_defaults"] = {
+            "theme": "dark",
+            "website_color_scheme": "dark",
+        }
+
+        targets = kioskctl.browser_runtime_default_targets(profile)
+
+        self.assertEqual(1, len(targets))
+        self.assertEqual(targets[0]["package"], "org.mozilla.fennec_fdroid")
+        self.assertEqual(targets[0]["theme"], "dark")
+        self.assertEqual(targets[0]["website_color_scheme"], "dark")
+        self.assertEqual(targets[0]["website_color_scheme_value"], "0")
+        self.assertEqual(
+            kioskctl.fennec_theme_booleans("dark"),
+            {
+                "pref_key_light_theme": "false",
+                "pref_key_dark_theme": "true",
+                "pref_key_follow_device_theme": "false",
+            },
+        )
+
+    def test_browser_runtime_defaults_reject_unknown_values(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["browser"]["runtime_defaults"] = {
+            "theme": "infrared",
+            "website_color_scheme": "dark",
+        }
+
+        with self.assertRaisesRegex(ValueError, "runtime_defaults.theme"):
+            kioskctl.validate_profile_shape(profile)
+
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["browser"]["runtime_defaults"] = {
+            "theme": "dark",
+            "website_color_scheme": "infrared",
+        }
+
+        with self.assertRaisesRegex(ValueError, "runtime_defaults.website_color_scheme"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_app_defaults_skip_when_adb_root_is_not_enabled(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["debug"] = {"root_access": "disabled"}
+
+        result = kioskctl.apply_runtime_app_defaults(object(), serial="abc123", profile=profile)  # type: ignore[arg-type]
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertIn("adb root", result["reason"])
+
+    def test_fennec_runtime_defaults_script_writes_dark_prefs(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["browser"]["runtime_defaults"] = {
+            "theme": "dark",
+            "website_color_scheme": "dark",
+        }
+        target = kioskctl.browser_runtime_default_targets(profile)[0]
+
+        script = kioskctl.fennec_runtime_defaults_script(target["package"], target)
+
+        self.assertIn('upsert_boolean "$prefs" "pref_key_dark_theme" true', script)
+        self.assertIn('upsert_boolean "$prefs" "pref_key_light_theme" false', script)
+        self.assertIn('layout.css.prefers-color-scheme.content-override", 0', script)
+        self.assertIn('ui.systemUsesDarkTheme", 1', script)
+
+    def test_latinime_runtime_defaults_script_writes_dark_theme(self) -> None:
+        script = kioskctl.latinime_runtime_defaults_script("4")
+
+        self.assertIn("com.android.inputmethod.latin", script)
+        self.assertIn("/data/user_de/0/$pkg", script)
+        self.assertIn('context="$(ls -Zd "$data"', script)
+        self.assertIn('chcon "$context" "$prefs_dir" "$prefs"', script)
+        self.assertIn("pref_keyboard_theme_20140509", script)
+        self.assertIn("$theme_id</string>", script)
 
     def test_home_assistant_browser_package_can_be_isolated(self) -> None:
         profile = deepcopy(kioskctl.load_profile(PROFILE))

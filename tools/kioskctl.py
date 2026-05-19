@@ -53,6 +53,32 @@ UI_NIGHT_MODE_NAMES = {
     "1": "no",
     "2": "yes",
 }
+BROWSER_RUNTIME_THEMES = {"dark", "light", "system"}
+BROWSER_WEBSITE_COLOR_SCHEME_VALUES = {
+    "dark": "0",
+    "light": "1",
+    "system": "2",
+    "browser": "3",
+}
+FENNEC_FAMILY_PACKAGES = {
+    "org.mozilla.fennec_fdroid",
+    "org.mozilla.firefox",
+    "org.mozilla.fenix",
+}
+DEFAULT_BROWSER_RUNTIME_DEFAULTS = {
+    "theme": "system",
+    "website_color_scheme": "browser",
+}
+KEYBOARD_THEME_VALUES = {
+    "default": "",
+    "light": "3",
+    "material_light": "3",
+    "dark": "4",
+    "material_dark": "4",
+}
+LATINIME_PACKAGE = "com.android.inputmethod.latin"
+LATINIME_IME = "com.android.inputmethod.latin/.LatinIME"
+LATINIME_THEME_PREF = "pref_keyboard_theme_20140509"
 DEFAULT_KIOSK_THEME: dict[str, Any] = {
     "title": "Rosie Kiosk",
     "subtitle": "Home Assistant and browser access",
@@ -479,6 +505,10 @@ def root_access_value(profile: dict[str, Any]) -> str:
     raise ValueError("debug.root_access must be one of: disabled, apps, adb, all")
 
 
+def adb_root_runtime_enabled(profile: dict[str, Any]) -> bool:
+    return root_access_value(profile) in {"2", "3"}
+
+
 def kiosk_config(profile: dict[str, Any]) -> dict[str, Any]:
     config = profile.get("kiosk")
     return config if isinstance(config, dict) else {}
@@ -508,7 +538,7 @@ def system_config(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def ui_night_mode_value(profile: dict[str, Any]) -> str:
-    raw = system_config(profile).get("ui_night_mode", "yes")
+    raw = system_config(profile).get("ui_night_mode", "auto")
     value = str(raw).strip().lower()
     if value not in UI_NIGHT_MODE_VALUES:
         raise ValueError("system.ui_night_mode must be one of: auto, no, yes")
@@ -517,6 +547,82 @@ def ui_night_mode_value(profile: dict[str, Any]) -> str:
 
 def ui_night_mode_name(profile: dict[str, Any]) -> str:
     return UI_NIGHT_MODE_NAMES[ui_night_mode_value(profile)]
+
+
+def keyboard_theme_value(profile: dict[str, Any]) -> str:
+    raw = system_config(profile).get("keyboard_theme", "default")
+    value = str(raw).strip().lower()
+    if value not in KEYBOARD_THEME_VALUES:
+        raise ValueError("system.keyboard_theme must be one of: default, light, dark")
+    return KEYBOARD_THEME_VALUES[value]
+
+
+def keyboard_theme_name(profile: dict[str, Any]) -> str:
+    value = keyboard_theme_value(profile)
+    if value == "3":
+        return "light"
+    if value == "4":
+        return "dark"
+    return "default"
+
+
+def browser_runtime_defaults(profile: dict[str, Any], app_name: str = "browser") -> dict[str, str]:
+    apps = profile.get("apps") or {}
+    browser = apps.get("browser") or {}
+    app = apps.get(app_name) or {}
+    defaults = dict(DEFAULT_BROWSER_RUNTIME_DEFAULTS)
+    if isinstance(browser, dict) and isinstance(browser.get("runtime_defaults"), dict):
+        defaults.update(browser["runtime_defaults"])
+    if app_name != "browser" and isinstance(app, dict) and isinstance(app.get("runtime_defaults"), dict):
+        defaults.update(app["runtime_defaults"])
+    theme = str(defaults.get("theme", "dark")).strip().lower()
+    website_color_scheme = str(defaults.get("website_color_scheme", "dark")).strip().lower()
+    if theme not in BROWSER_RUNTIME_THEMES:
+        raise ValueError(f"apps.{app_name}.runtime_defaults.theme must be one of: dark, light, system")
+    if website_color_scheme not in BROWSER_WEBSITE_COLOR_SCHEME_VALUES:
+        raise ValueError(
+            f"apps.{app_name}.runtime_defaults.website_color_scheme must be one of: "
+            "dark, light, system, browser"
+        )
+    return {
+        "theme": theme,
+        "website_color_scheme": website_color_scheme,
+        "website_color_scheme_value": BROWSER_WEBSITE_COLOR_SCHEME_VALUES[website_color_scheme],
+    }
+
+
+def browser_runtime_default_targets(profile: dict[str, Any]) -> list[dict[str, str]]:
+    apps = profile.get("apps") or {}
+    targets: list[dict[str, str]] = []
+    seen_packages: set[str] = set()
+    browser = apps.get("browser") or {}
+    browser_defaults_configured = (
+        isinstance(browser, dict) and isinstance(browser.get("runtime_defaults"), dict)
+    )
+    for app_name in ("browser", "home_assistant_browser"):
+        app = apps.get(app_name)
+        if not isinstance(app, dict):
+            continue
+        app_defaults_configured = isinstance(app.get("runtime_defaults"), dict)
+        if not browser_defaults_configured and not app_defaults_configured:
+            continue
+        package = str(app.get("package") or "")
+        if not package or package in seen_packages:
+            continue
+        seen_packages.add(package)
+        defaults = browser_runtime_defaults(profile, app_name)
+        targets.append(
+            {
+                "app": app_name,
+                "package": package,
+                **defaults,
+            }
+        )
+    return targets
+
+
+def is_fennec_family_package(package: str) -> bool:
+    return package in FENNEC_FAMILY_PACKAGES
 
 
 def kiosk_theme(profile: dict[str, Any]) -> dict[str, Any]:
@@ -1049,6 +1155,339 @@ def apply_runtime_system_defaults(
         raise DeviceError(f"failed to set Android UI night mode: {result.stderr or result.stdout}")
 
 
+def fennec_theme_booleans(theme: str) -> dict[str, str]:
+    return {
+        "pref_key_light_theme": "true" if theme == "light" else "false",
+        "pref_key_dark_theme": "true" if theme == "dark" else "false",
+        "pref_key_follow_device_theme": "true" if theme == "system" else "false",
+    }
+
+
+def fennec_runtime_defaults_script(package: str, defaults: dict[str, str]) -> str:
+    booleans = fennec_theme_booleans(defaults["theme"])
+    content_override = defaults["website_color_scheme_value"]
+    system_dark = "0" if defaults["theme"] == "light" else "1"
+    return f"""
+set -eu
+pkg={shlex.quote(package)}
+data="/data/data/$pkg"
+if [ ! -d "$data" ]; then
+  echo "missing package data directory: $data" >&2
+  exit 1
+fi
+owner="$(stat -c '%u:%g' "$data")"
+am force-stop "$pkg" >/dev/null 2>&1 || true
+if [ ! -d "$data/files/mozilla" ] || ! find "$data/files/mozilla" -maxdepth 1 -type d -name '*.default*' 2>/dev/null | grep -q .; then
+  monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+  sleep 6
+  am force-stop "$pkg" >/dev/null 2>&1 || true
+fi
+
+prefs_dir="$data/shared_prefs"
+prefs="$prefs_dir/fenix_preferences.xml"
+mkdir -p "$prefs_dir"
+if [ ! -f "$prefs" ]; then
+  printf "%s\\n" "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "</map>" > "$prefs"
+fi
+
+upsert_boolean() {{
+  file="$1"
+  key="$2"
+  value="$3"
+  tmp="$file.tmp"
+  if grep -q "name=\\"$key\\"" "$file"; then
+    sed "s#<boolean name=\\"$key\\" value=\\"[^\\"]*\\" />#    <boolean name=\\"$key\\" value=\\"$value\\" />#" "$file" > "$tmp"
+  else
+    sed "/<\\/map>/i\\    <boolean name=\\"$key\\" value=\\"$value\\" />" "$file" > "$tmp"
+  fi
+  mv "$tmp" "$file"
+}}
+
+upsert_boolean "$prefs" "pref_key_light_theme" {shlex.quote(booleans["pref_key_light_theme"])}
+upsert_boolean "$prefs" "pref_key_dark_theme" {shlex.quote(booleans["pref_key_dark_theme"])}
+upsert_boolean "$prefs" "pref_key_follow_device_theme" {shlex.quote(booleans["pref_key_follow_device_theme"])}
+chown "$owner" "$prefs"
+chmod 0600 "$prefs"
+
+mozilla="$data/files/mozilla"
+mkdir -p "$mozilla"
+profiles="$(find "$mozilla" -maxdepth 1 -type d -name '*.default*' 2>/dev/null || true)"
+if [ -z "$profiles" ]; then
+  profile="$mozilla/rosie.default"
+  mkdir -p "$profile"
+  if [ ! -f "$mozilla/profiles.ini" ]; then
+    cat > "$mozilla/profiles.ini" <<'EOF_PROFILES'
+[Profile0]
+Name=default
+IsRelative=1
+Path=rosie.default
+Default=1
+
+[General]
+StartWithLastProfile=1
+Version=2
+EOF_PROFILES
+  fi
+  profiles="$profile"
+fi
+
+for profile in $profiles; do
+  userjs="$profile/user.js"
+  tmp="$userjs.tmp"
+  if [ -f "$userjs" ]; then
+    grep -v -E 'layout\\.css\\.prefers-color-scheme\\.content-override|ui\\.systemUsesDarkTheme' "$userjs" > "$tmp" || true
+  else
+    : > "$tmp"
+  fi
+  cat >> "$tmp" <<EOF_USERJS
+user_pref("layout.css.prefers-color-scheme.content-override", {content_override});
+user_pref("ui.systemUsesDarkTheme", {system_dark});
+EOF_USERJS
+  mv "$tmp" "$userjs"
+  chown "$owner" "$userjs"
+  chmod 0600 "$userjs"
+done
+
+chown -R "$owner" "$prefs_dir" "$mozilla"
+restorecon -RF "$prefs_dir" "$mozilla" >/dev/null 2>&1 || true
+am force-stop "$pkg" >/dev/null 2>&1 || true
+"""
+
+
+def latinime_runtime_defaults_script(theme_id: str) -> str:
+    return f"""
+set -eu
+pkg={shlex.quote(LATINIME_PACKAGE)}
+ime_id={shlex.quote(LATINIME_IME)}
+theme_id={shlex.quote(theme_id)}
+data_dirs=""
+for candidate in "/data/user_de/0/$pkg" "/data/data/$pkg"; do
+  if [ -d "$candidate" ]; then
+    data_dirs="$data_dirs $candidate"
+  fi
+done
+if [ -z "$data_dirs" ]; then
+  echo "missing package data directory for $pkg" >&2
+  exit 1
+fi
+for data in $data_dirs; do
+  owner="$(stat -c '%u:%g' "$data")"
+  context="$(ls -Zd "$data" | awk '{{print $1}}')"
+  prefs_dir="$data/shared_prefs"
+  prefs="$prefs_dir/${{pkg}}_preferences.xml"
+  mkdir -p "$prefs_dir"
+  if [ ! -f "$prefs" ]; then
+    printf "%s\\n" "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>" "<map>" "</map>" > "$prefs"
+  fi
+  tmp="$prefs.tmp"
+  if grep -q "name=\\"{LATINIME_THEME_PREF}\\"" "$prefs"; then
+    sed "s#<string name=\\"{LATINIME_THEME_PREF}\\">[^<]*</string>#    <string name=\\"{LATINIME_THEME_PREF}\\">$theme_id</string>#" "$prefs" > "$tmp"
+  else
+    sed "/<\\/map>/i\\    <string name=\\"{LATINIME_THEME_PREF}\\">$theme_id</string>" "$prefs" > "$tmp"
+  fi
+  mv "$tmp" "$prefs"
+  chown "$owner" "$prefs_dir" "$prefs"
+  chcon "$context" "$prefs_dir" "$prefs" >/dev/null 2>&1 || true
+  chmod 0600 "$prefs"
+done
+am force-stop "$pkg" >/dev/null 2>&1 || true
+ime enable "$ime_id" >/dev/null 2>&1 || true
+ime set "$ime_id" >/dev/null 2>&1 || true
+"""
+
+
+def apply_runtime_app_defaults(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    if not adb_root_runtime_enabled(profile):
+        return {
+            "status": "skipped",
+            "reason": "debug.root_access does not enable adb root",
+            "targets": [],
+        }
+    ensure_adb_root(runner, serial=serial)
+    results: list[dict[str, str]] = []
+    for target in browser_runtime_default_targets(profile):
+        package = target["package"]
+        if not is_fennec_family_package(package):
+            results.append(
+                {
+                    "app": target["app"],
+                    "package": package,
+                    "status": "skipped",
+                    "reason": "unsupported browser package",
+                }
+            )
+            continue
+        result = adb_shell_script(
+            runner,
+            serial,
+            fennec_runtime_defaults_script(package, target),
+            check=False,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise DeviceError(
+                f"failed to apply browser defaults for {package}: {result.stderr or result.stdout}"
+            )
+        results.append(
+            {
+                "app": target["app"],
+                "package": package,
+                "status": "pass",
+                "theme": target["theme"],
+                "website_color_scheme": target["website_color_scheme"],
+            }
+        )
+    keyboard_theme = keyboard_theme_value(profile)
+    if keyboard_theme:
+        result = adb_shell_script(
+            runner,
+            serial,
+            latinime_runtime_defaults_script(keyboard_theme),
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise DeviceError(f"failed to apply keyboard defaults: {result.stderr or result.stdout}")
+        results.append(
+            {
+                "app": "keyboard",
+                "package": LATINIME_PACKAGE,
+                "status": "pass",
+                "theme": keyboard_theme_name(profile),
+            }
+        )
+    return {
+        "status": "pass",
+        "targets": results,
+    }
+
+
+def collect_runtime_app_defaults_evidence(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    profile: dict[str, Any],
+    out_dir: Path,
+) -> dict[str, Any]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not adb_root_runtime_enabled(profile):
+        evidence: dict[str, Any] = {
+            "status": "skipped",
+            "reason": "debug.root_access does not enable adb root",
+            "targets": [],
+        }
+        write_json(out_dir / "app-defaults.json", evidence)
+        return evidence
+    ensure_adb_root(runner, serial=serial)
+    targets: list[dict[str, Any]] = []
+    for target in browser_runtime_default_targets(profile):
+        package = target["package"]
+        if not is_fennec_family_package(package):
+            targets.append(
+                {
+                    "app": target["app"],
+                    "package": package,
+                    "status": "skipped",
+                    "reason": "unsupported browser package",
+                }
+            )
+            continue
+        script = f"""
+set -eu
+pkg={shlex.quote(package)}
+prefs="/data/data/$pkg/shared_prefs/fenix_preferences.xml"
+if [ ! -f "$prefs" ]; then
+  echo "prefs_missing=1"
+else
+  for key in pref_key_light_theme pref_key_dark_theme pref_key_follow_device_theme; do
+    value="$(grep "name=\\"$key\\"" "$prefs" | sed 's/.*value="\\([^"]*\\)".*/\\1/' | head -1 || true)"
+    echo "$key=$value"
+  done
+fi
+found_userjs=0
+for userjs in /data/data/"$pkg"/files/mozilla/*.default*/user.js /data/data/"$pkg"/files/mozilla/*.default/user.js; do
+  [ -f "$userjs" ] || continue
+  found_userjs=1
+  echo "user_js=$userjs"
+  grep -E 'layout\\.css\\.prefers-color-scheme\\.content-override|ui\\.systemUsesDarkTheme' "$userjs" || true
+done
+echo "user_js_found=$found_userjs"
+"""
+        result = adb_shell_script(runner, serial, script, check=False, timeout=30)
+        text = result.stdout + result.stderr
+        (out_dir / f"app-defaults-{target['app']}.txt").write_text(text, encoding="utf-8")
+        prefs: dict[str, str] = {}
+        user_prefs: dict[str, str] = {}
+        for line in text.splitlines():
+            if line.startswith("pref_key_") and "=" in line:
+                key, value = line.split("=", 1)
+                prefs[key] = value
+            elif line.startswith("user_pref("):
+                if '"layout.css.prefers-color-scheme.content-override"' in line:
+                    user_prefs["layout.css.prefers-color-scheme.content-override"] = line.rsplit(",", 1)[-1].strip(" );")
+                elif '"ui.systemUsesDarkTheme"' in line:
+                    user_prefs["ui.systemUsesDarkTheme"] = line.rsplit(",", 1)[-1].strip(" );")
+            elif "=" in line:
+                key, value = line.split("=", 1)
+                prefs[key] = value
+        targets.append(
+            {
+                "app": target["app"],
+                "package": package,
+                "status": "pass" if result.returncode == 0 else "fail",
+                "prefs": prefs,
+                "user_prefs": user_prefs,
+            }
+        )
+    keyboard_theme = keyboard_theme_value(profile)
+    if keyboard_theme:
+        script = f"""
+set -eu
+data=""
+for candidate in "/data/user_de/0/{LATINIME_PACKAGE}" "/data/data/{LATINIME_PACKAGE}"; do
+  if [ -d "$candidate" ]; then
+    data="$candidate"
+    break
+  fi
+done
+prefs="$data/shared_prefs/{LATINIME_PACKAGE}_preferences.xml"
+echo "prefs_path=$prefs"
+if [ ! -f "$prefs" ]; then
+  echo "prefs_missing=1"
+else
+  value="$(grep "name=\\"{LATINIME_THEME_PREF}\\"" "$prefs" | sed 's/.*>\\([^<]*\\)<.*/\\1/' | head -1 || true)"
+  echo "{LATINIME_THEME_PREF}=$value"
+fi
+"""
+        result = adb_shell_script(runner, serial, script, check=False, timeout=30)
+        text = result.stdout + result.stderr
+        (out_dir / "app-defaults-keyboard.txt").write_text(text, encoding="utf-8")
+        prefs: dict[str, str] = {}
+        for line in text.splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                prefs[key] = value
+        targets.append(
+            {
+                "app": "keyboard",
+                "package": LATINIME_PACKAGE,
+                "status": "pass" if result.returncode == 0 else "fail",
+                "prefs": prefs,
+            }
+        )
+    evidence = {
+        "status": "pass",
+        "targets": targets,
+    }
+    write_json(out_dir / "app-defaults.json", evidence)
+    return evidence
+
+
 def validate_tablet_state(
     runner: CommandRunner,
     *,
@@ -1062,6 +1501,13 @@ def validate_tablet_state(
         out_dir=out_dir,
         profile=profile,
     )
+    app_defaults = collect_runtime_app_defaults_evidence(
+        runner,
+        serial=serial,
+        profile=profile,
+        out_dir=out_dir,
+    )
+    evidence["app_defaults"] = app_defaults
     expected = expected_device_name(profile)
     actual = evidence["props"].get("ro.product.device")
     failures: list[str] = []
@@ -1102,6 +1548,48 @@ def validate_tablet_state(
             "Android UI night mode is "
             f"{evidence['settings'].get('uimode_night')}, expected Night mode: {expected_night}"
         )
+    if app_defaults.get("status") == "pass":
+        app_default_targets = {
+            str(item.get("package")): item for item in app_defaults.get("targets", []) if isinstance(item, dict)
+        }
+        for target in browser_runtime_default_targets(profile):
+            package = target["package"]
+            if not is_fennec_family_package(package):
+                continue
+            actual_defaults = app_default_targets.get(package)
+            if not actual_defaults or actual_defaults.get("status") != "pass":
+                failures.append(f"missing browser runtime-default evidence for {package}")
+                continue
+            expected_bools = fennec_theme_booleans(target["theme"])
+            prefs = actual_defaults.get("prefs") or {}
+            for key, expected_value in expected_bools.items():
+                if prefs.get(key) != expected_value:
+                    failures.append(f"{package} {key} is {prefs.get(key)}, expected {expected_value}")
+            user_prefs = actual_defaults.get("user_prefs") or {}
+            if user_prefs.get("layout.css.prefers-color-scheme.content-override") != target["website_color_scheme_value"]:
+                failures.append(
+                    f"{package} website color-scheme override is "
+                    f"{user_prefs.get('layout.css.prefers-color-scheme.content-override')}, "
+                    f"expected {target['website_color_scheme_value']}"
+                )
+        expected_keyboard_theme = keyboard_theme_value(profile)
+        if expected_keyboard_theme:
+            keyboard_defaults = next(
+                (
+                    item for item in app_defaults.get("targets", [])
+                    if isinstance(item, dict) and item.get("app") == "keyboard"
+                ),
+                None,
+            )
+            if not keyboard_defaults or keyboard_defaults.get("status") != "pass":
+                failures.append("missing keyboard runtime-default evidence")
+            else:
+                prefs = keyboard_defaults.get("prefs") or {}
+                if prefs.get(LATINIME_THEME_PREF) != expected_keyboard_theme:
+                    failures.append(
+                        f"{LATINIME_PACKAGE} {LATINIME_THEME_PREF} is "
+                        f"{prefs.get(LATINIME_THEME_PREF)}, expected {expected_keyboard_theme}"
+                    )
 
     if launcher_package not in evidence.get("home_resolve", ""):
         failures.append(f"HOME intent does not resolve to kiosk launcher: {launcher_package}")
@@ -1190,6 +1678,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
                 raise ValueError(f"missing apps.{app_name}.{key}")
         if is_placeholder(app["sha256"]):
             warnings.append(f"apps.{app_name}.sha256 is still a placeholder")
+        validate_browser_runtime_defaults_shape(app_name, app)
     if "home_assistant_browser" in apps:
         app = require_mapping(apps, "home_assistant_browser")
         for key in ("module", "package", "apk", "sha256"):
@@ -1197,6 +1686,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
                 raise ValueError(f"missing apps.home_assistant_browser.{key}")
         if is_placeholder(app["sha256"]):
             warnings.append("apps.home_assistant_browser.sha256 is still a placeholder")
+        validate_browser_runtime_defaults_shape("home_assistant_browser", app)
     for app_name, app in apps.items():
         if app_name in ("home_assistant", "browser", "home_assistant_browser"):
             continue
@@ -1254,6 +1744,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
     if "system" in profile:
         require_mapping(profile, "system")
     ui_night_mode_value(profile)
+    keyboard_theme_value(profile)
 
     if "deployment" in profile:
         deployment = require_mapping(profile, "deployment")
@@ -1365,6 +1856,23 @@ def validate_optional_http_url(value: Any, name: str) -> None:
 def validate_kiosk_launch_shape(launch: dict[str, str]) -> None:
     validate_optional_http_url(launch["home_assistant_url"], "kiosk.launch.home_assistant_url")
     validate_optional_http_url(launch["browser_url"], "kiosk.launch.browser_url")
+
+
+def validate_browser_runtime_defaults_shape(app_name: str, app: dict[str, Any]) -> None:
+    defaults = app.get("runtime_defaults")
+    if defaults is None:
+        return
+    if not isinstance(defaults, dict):
+        raise ValueError(f"apps.{app_name}.runtime_defaults must be a mapping")
+    theme = str(defaults.get("theme", "dark")).strip().lower()
+    if theme not in BROWSER_RUNTIME_THEMES:
+        raise ValueError(f"apps.{app_name}.runtime_defaults.theme must be one of: dark, light, system")
+    website = str(defaults.get("website_color_scheme", "dark")).strip().lower()
+    if website not in BROWSER_WEBSITE_COLOR_SCHEME_VALUES:
+        raise ValueError(
+            f"apps.{app_name}.runtime_defaults.website_color_scheme must be one of: "
+            "dark, light, system, browser"
+        )
 
 
 def validate_apk_payload(profile: dict[str, Any], app_name: str, apk: Path) -> list[str]:
@@ -1718,6 +2226,8 @@ make device-preflight    Verify host adb/fastboot and the plugged-in tablet.
 make device-snapshot     Collect non-destructive device evidence.
 make device-apply-system-defaults
                          Apply runtime defaults such as Android dark mode.
+make device-apply-app-defaults
+                         Apply root-backed app defaults such as browser dark mode.
 make deploy-tablet       Gated USB deployment to the tablet.
 make validate-tablet     Collect post-flash tablet evidence.
 make collect-device-logs Collect logs and package/build evidence.
@@ -2247,6 +2757,33 @@ def cmd_device_apply_system_defaults(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_device_apply_app_defaults(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    validate_profile_shape(profile)
+    missing = missing_platform_tools()
+    if missing:
+        print(f"missing Android Platform Tools commands: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    runner = CommandRunner()
+    try:
+        selected = select_single_device(
+            adb_devices(runner),
+            requested_serial=profile_device_serial(profile, args.serial),
+            allowed_states={"device"},
+            tool="adb",
+        )
+        serial = str(selected["serial"])
+        result = apply_runtime_app_defaults(runner, serial=serial, profile=profile)
+        if result["status"] == "skipped":
+            print(f"Skipped app defaults for {serial}: {result['reason']}")
+        else:
+            print(f"Applied app defaults to {serial}: {len(result['targets'])} target(s)")
+        return 0
+    except DeviceError as exc:
+        print(f"apply app defaults failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def deployment_mode(profile: dict[str, Any], override: str | None) -> str:
     if override:
         return override
@@ -2492,10 +3029,12 @@ def cmd_deploy_tablet(args: argparse.Namespace) -> int:
             send_reboot_command(runner, ["adb", "-s", serial, "reboot"], check=False)
         wait_for_boot_completed(runner, serial=serial, timeout_seconds=post_flash_timeout)
         apply_runtime_system_defaults(runner, serial=serial, profile=profile)
+        apply_runtime_app_defaults(runner, serial=serial, profile=profile)
         if wifi_backup_path:
             restore_wifi_config(runner, serial=serial, input_path=wifi_backup_path, reboot=True)
             wait_for_boot_completed(runner, serial=serial, timeout_seconds=post_flash_timeout)
             apply_runtime_system_defaults(runner, serial=serial, profile=profile)
+            apply_runtime_app_defaults(runner, serial=serial, profile=profile)
         payload["status"] = "pass"
         payload["finished_at"] = now_iso()
         write_json(out_dir / "DEVICE-DEPLOYMENT.json", payload)
@@ -2606,6 +3145,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("device-backup-wifi", cmd_device_backup_wifi),
         ("device-restore-wifi", cmd_device_restore_wifi),
         ("device-apply-system-defaults", cmd_device_apply_system_defaults),
+        ("device-apply-app-defaults", cmd_device_apply_app_defaults),
         ("deploy-tablet", cmd_deploy_tablet),
         ("validate-tablet", cmd_validate_tablet),
         ("collect-device-logs", cmd_collect_device_logs),
@@ -2620,6 +3160,7 @@ def build_parser() -> argparse.ArgumentParser:
             "device-snapshot",
             "device-backup-wifi",
             "device-restore-wifi",
+            "device-apply-app-defaults",
             "deploy-tablet",
             "validate-tablet",
             "collect-device-logs",
@@ -2632,6 +3173,7 @@ def build_parser() -> argparse.ArgumentParser:
             "device-backup-wifi",
             "device-restore-wifi",
             "device-apply-system-defaults",
+            "device-apply-app-defaults",
             "deploy-tablet",
             "validate-tablet",
             "collect-device-logs",

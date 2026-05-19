@@ -140,7 +140,7 @@ def root_access_value(profile):
 
 
 def ui_night_mode_value(profile):
-    raw = (profile.get("system") or {}).get("ui_night_mode", "yes")
+    raw = (profile.get("system") or {}).get("ui_night_mode", "auto")
     value = str(raw).strip().lower()
     if value not in UI_NIGHT_MODE_VALUES:
         raise ValueError("system.ui_night_mode must be one of: auto, no, yes")

@@ -7,7 +7,7 @@ lineage:
   sync_jobs: 16
 
 system:
-  ui_night_mode: 'yes'
+  ui_night_mode: auto
 
 targets:
   tablet:

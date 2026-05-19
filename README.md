@@ -213,9 +213,11 @@ make validate-inputs PROFILE_OVERLAY=profiles/local/site.yaml
 make build-images PROFILE_OVERLAY=profiles/local/site.yaml
 ```
 
-The overlay system supports local text, colors, button sizing, image or video backgrounds, Android UI night mode, launch URLs, and Android ARGB colors such as `#CC2c2c2c`. Private assets belong under `inputs/kiosk-assets/` and should be pinned in the overlay with `sha256sum`.
+The overlay system supports local text, colors, button sizing, image or video backgrounds, Android UI night mode, opt-in browser and keyboard theme defaults, launch URLs, and Android ARGB colors such as `#CC2c2c2c`. Private assets belong under `inputs/kiosk-assets/` and should be pinned in the overlay with `sha256sum`.
 
 When `kiosk.launch.home_assistant_url` and `kiosk.launch.browser_url` both target the default Fennec browser, the Home Assistant button opens HA in a Fennec Custom Tab while the Browser button opens the configured URL as a fresh normal Fennec tab. This keeps Browser tabs, such as `https://duckduckgo.com/`, out of the HA view while preserving the normal browser session. For stronger process-level separation, configure an optional `apps.home_assistant_browser` APK; the Home Assistant button then targets that package instead.
+
+If a local development profile uses `debug.root_access: adb` and configures runtime theme defaults, deployment also applies those app-data settings under `/data`, such as Fennec chrome theme, website `prefers-color-scheme`, and the built-in LatinIME keyboard theme.
 
 Do not commit local overlays, private media, Home Assistant secrets, Wi-Fi credentials, vendor blobs, APK binaries, or release signing keys.
 

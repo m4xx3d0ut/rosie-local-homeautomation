@@ -38,7 +38,21 @@ make publish-flash-bundle PROFILE_OVERLAY=profiles/local/site.yaml
 - `browser_url`: when set, the Browser button opens this URL as a new normal Fennec/Firefox-compatible browser tab instead of opening a blank browser session. Use `https://duckduckgo.com/` for a neutral general-browsing start page.
 - `home_assistant_browser_package`: optional override for the browser package used only by the Home Assistant button.
 
-`system.ui_night_mode` controls the Android default night mode and accepts `'yes'`, `'no'`, or `'auto'`. Quote the value because YAML otherwise treats `yes` and `no` as booleans. The public profile uses `'yes'`.
+`system.ui_night_mode` controls the Android default night mode and accepts `'yes'`, `'no'`, or `auto`. Quote `yes` and `no` because YAML otherwise treats them as booleans. The public profile uses `auto`; site overlays can set `'yes'` for a dark default.
+
+`system.keyboard_theme` controls the built-in LatinIME keyboard theme during the root-backed app-defaults step. Use `dark`, `light`, or `default`; omit it to keep the stock keyboard preference. This belongs in a local overlay when you want a site-specific default.
+
+`apps.browser.runtime_defaults` controls root-backed browser preferences applied after Android boots. It is opt-in; omit it to leave browser app data alone. With the default Fennec APK, a dark local overlay can use:
+
+```yaml
+apps:
+  browser:
+    runtime_defaults:
+      theme: dark
+      website_color_scheme: dark
+```
+
+`theme` accepts `dark`, `light`, or `system`. `website_color_scheme` accepts `dark`, `light`, `system`, or `browser`, and maps to Firefox's content color-scheme preference so sites with `prefers-color-scheme` support can select their dark styles. This requires `debug.root_access: adb`; non-root public builds skip the app-data step.
 
 To isolate Home Assistant tabs from general browser tabs, add a second browser APK under `apps.home_assistant_browser`:
 
