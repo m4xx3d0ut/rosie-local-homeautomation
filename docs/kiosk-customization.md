@@ -35,7 +35,8 @@ make publish-flash-bundle PROFILE_OVERLAY=profiles/local/site.yaml
 `kiosk.launch` supports optional local URLs:
 
 - `home_assistant_url`: when set, the Home Assistant button opens this URL in the browser instead of launching the Companion app. With the default Fennec package shared by both buttons, HA opens in a Fennec Custom Tab so normal Browser tabs do not leak into the HA view.
-- `browser_url`: when set, the Browser button opens this URL as a new normal Fennec/Firefox-compatible browser tab instead of opening a blank browser session. Use `https://duckduckgo.com/` for a neutral general-browsing start page.
+- `browser_url`: when set, the Browser button can open this URL according to `browser_launch_policy`. Use `https://duckduckgo.com/` for a neutral general-browsing start page.
+- `browser_launch_policy`: controls Browser button behavior when `browser_url` is set. Use `resume` to only bring the browser forward, `seed_once` to open `browser_url` once and then resume the browser, `always_url` to reopen the URL without forcing a new tab, or `always_new_tab` for the legacy fresh-tab behavior. The default is `always_new_tab` for compatibility.
 - `home_assistant_browser_package`: optional override for the browser package used only by the Home Assistant button.
 
 `system.ui_night_mode` controls the Android default night mode and accepts `'yes'`, `'no'`, or `auto`. Quote `yes` and `no` because YAML otherwise treats them as booleans. The public profile uses `auto`; site overlays can set `'yes'` for a dark default.

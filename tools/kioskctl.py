@@ -65,6 +65,12 @@ FENNEC_FAMILY_PACKAGES = {
     "org.mozilla.firefox",
     "org.mozilla.fenix",
 }
+BROWSER_LAUNCH_POLICIES = {
+    "resume",
+    "seed_once",
+    "always_url",
+    "always_new_tab",
+}
 DEFAULT_BROWSER_RUNTIME_DEFAULTS = {
     "theme": "system",
     "website_color_scheme": "browser",
@@ -650,6 +656,7 @@ def kiosk_launch(profile: dict[str, Any]) -> dict[str, str]:
     return {
         "home_assistant_url": str(launch.get("home_assistant_url") or ""),
         "browser_url": str(launch.get("browser_url") or ""),
+        "browser_launch_policy": str(launch.get("browser_launch_policy") or "always_new_tab"),
         "home_assistant_browser_package": str(
             launch.get("home_assistant_browser_package")
             or ha_browser.get("package")
@@ -708,6 +715,7 @@ def kiosk_theme_env(profile: dict[str, Any]) -> dict[str, str]:
         "KIOSK_BUTTON_WIDTH_DP": str(buttons["width_dp"]),
         "KIOSK_HA_URL": str(launch["home_assistant_url"]),
         "KIOSK_BROWSER_URL": str(launch["browser_url"]),
+        "KIOSK_BROWSER_LAUNCH_POLICY": str(launch["browser_launch_policy"]),
         "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
     }
 
@@ -1856,6 +1864,11 @@ def validate_optional_http_url(value: Any, name: str) -> None:
 def validate_kiosk_launch_shape(launch: dict[str, str]) -> None:
     validate_optional_http_url(launch["home_assistant_url"], "kiosk.launch.home_assistant_url")
     validate_optional_http_url(launch["browser_url"], "kiosk.launch.browser_url")
+    if launch["browser_launch_policy"] not in BROWSER_LAUNCH_POLICIES:
+        raise ValueError(
+            "kiosk.launch.browser_launch_policy must be one of: "
+            "resume, seed_once, always_url, always_new_tab"
+        )
 
 
 def validate_browser_runtime_defaults_shape(app_name: str, app: dict[str, Any]) -> None:

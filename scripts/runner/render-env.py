@@ -91,6 +91,7 @@ def launch_for(profile):
     return {
         "home_assistant_url": str(launch.get("home_assistant_url") or ""),
         "browser_url": str(launch.get("browser_url") or ""),
+        "browser_launch_policy": str(launch.get("browser_launch_policy") or "always_new_tab"),
         "home_assistant_browser_package": str(
             launch.get("home_assistant_browser_package")
             or ha_browser.get("package")
@@ -229,6 +230,7 @@ def env_for(profile, repo_root, container):
         "KIOSK_BUTTON_WIDTH_DP": str(buttons["width_dp"]),
         "KIOSK_HA_URL": str(launch["home_assistant_url"]),
         "KIOSK_BROWSER_URL": str(launch["browser_url"]),
+        "KIOSK_BROWSER_LAUNCH_POLICY": str(launch["browser_launch_policy"]),
         "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
         "BLOB_ARCHIVE": str(profile["blobs"]["archive"]),
         "BLOB_SHA256": str(profile["blobs"]["sha256"]),

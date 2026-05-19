@@ -47,6 +47,7 @@ KIOSK_BUTTON_MIN_HEIGHT_DP="${KIOSK_BUTTON_MIN_HEIGHT_DP:-68}"
 KIOSK_BUTTON_WIDTH_DP="${KIOSK_BUTTON_WIDTH_DP:-520}"
 KIOSK_HA_URL="${KIOSK_HA_URL:-}"
 KIOSK_BROWSER_URL="${KIOSK_BROWSER_URL:-}"
+KIOSK_BROWSER_LAUNCH_POLICY="${KIOSK_BROWSER_LAUNCH_POLICY:-always_new_tab}"
 KIOSK_HA_BROWSER_PACKAGE="${KIOSK_HA_BROWSER_PACKAGE:-${HA_BROWSER_PACKAGE:-${BROWSER_PACKAGE}}}"
 SYSTEM_UI_NIGHT_MODE="${SYSTEM_UI_NIGHT_MODE:-auto}"
 SYSTEM_UI_NIGHT_MODE_VALUE="${SYSTEM_UI_NIGHT_MODE_VALUE:-0}"
@@ -82,6 +83,9 @@ export \
   KIOSK_BUTTON_RADIUS_DP \
   KIOSK_BUTTON_MIN_HEIGHT_DP \
   KIOSK_BUTTON_WIDTH_DP \
+  KIOSK_HA_URL \
+  KIOSK_BROWSER_URL \
+  KIOSK_BROWSER_LAUNCH_POLICY \
   KIOSK_HA_BROWSER_PACKAGE
 
 ROSIE_VENDOR="${ANDROID_ROOT}/vendor/rosie"
@@ -451,6 +455,7 @@ content = f"""package {package_name};
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -504,6 +509,9 @@ public class LauncherActivity extends Activity {{
     private static final int BUTTON_WIDTH_DP = {i("KIOSK_BUTTON_WIDTH_DP")};
     private static final String HA_URL = {j(os.environ["KIOSK_HA_URL"])};
     private static final String BROWSER_URL = {j(os.environ["KIOSK_BROWSER_URL"])};
+    private static final String BROWSER_LAUNCH_POLICY = {j(os.environ["KIOSK_BROWSER_LAUNCH_POLICY"])};
+    private static final String PREFS_NAME = "launcher_state";
+    private static final String PREF_BROWSER_URL_SEEDED = "browser_url_seeded";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {{
@@ -737,24 +745,40 @@ public class LauncherActivity extends Activity {{
     }}
 
     private void launchBrowser() {{
-        if (BROWSER_URL.length() > 0) {{
-            launchUrl(BROWSER_URL, BROWSER_PACKAGE, false, true, false);
+        if (BROWSER_URL.length() == 0 || "resume".equals(BROWSER_LAUNCH_POLICY)) {{
+            launchPackage(BROWSER_PACKAGE);
             return;
         }}
-        launchPackage(BROWSER_PACKAGE);
+        if ("seed_once".equals(BROWSER_LAUNCH_POLICY)) {{
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String seedKey = PREF_BROWSER_URL_SEEDED + ":" + BROWSER_URL;
+            if (!prefs.getBoolean(seedKey, false)) {{
+                if (launchUrl(BROWSER_URL, BROWSER_PACKAGE, false, true, false)) {{
+                    prefs.edit().putBoolean(seedKey, true).apply();
+                }}
+                return;
+            }}
+            launchPackage(BROWSER_PACKAGE);
+            return;
+        }}
+        if ("always_url".equals(BROWSER_LAUNCH_POLICY)) {{
+            launchUrl(BROWSER_URL, BROWSER_PACKAGE, false, false, false);
+            return;
+        }}
+        launchUrl(BROWSER_URL, BROWSER_PACKAGE, false, true, false);
     }}
 
     private boolean shouldIsolateHomeAssistantBrowser() {{
         return HA_BROWSER_PACKAGE.length() > 0 && !HA_BROWSER_PACKAGE.equals(BROWSER_PACKAGE);
     }}
 
-    private void launchUrl(String url, String preferredPackage, boolean isolatedTask, boolean createNewTab, boolean customTab) {{
+    private boolean launchUrl(String url, String preferredPackage, boolean isolatedTask, boolean createNewTab, boolean customTab) {{
         if (customTab && launchFennecCustomTab(url, preferredPackage)) {{
-            return;
+            return true;
         }}
 
         if (createNewTab && launchFennecNewTab(url, preferredPackage)) {{
-            return;
+            return true;
         }}
 
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -774,6 +798,7 @@ public class LauncherActivity extends Activity {{
         }}
         try {{
             startActivity(intent);
+            return true;
         }} catch (Exception firstError) {{
             if (preferredPackage.length() > 0) {{
                 Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
@@ -784,12 +809,13 @@ public class LauncherActivity extends Activity {{
                 }}
                 try {{
                     startActivity(fallback);
-                    return;
+                    return true;
                 }} catch (Exception ignored) {{
                     // Fall through to the user-visible error below.
                 }}
             }}
             Toast.makeText(this, "URL is not available", Toast.LENGTH_SHORT).show();
+            return false;
         }}
     }}
 

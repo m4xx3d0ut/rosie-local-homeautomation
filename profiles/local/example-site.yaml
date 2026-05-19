@@ -18,6 +18,8 @@ kiosk:
   launch:
     home_assistant_url: http://homeassistant.local:8123/
     browser_url: https://duckduckgo.com/
+    # Browser button behavior: resume, seed_once, always_url, or always_new_tab.
+    browser_launch_policy: seed_once
   theme:
     title: Local Home
     subtitle: Kitchen, lights, climate, and camera controls

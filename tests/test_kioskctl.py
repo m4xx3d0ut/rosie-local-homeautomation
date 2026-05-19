@@ -54,6 +54,7 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(env["KIOSK_TEXT_SHADOW_COLOR"], "#99000000")
         self.assertEqual(env["KIOSK_HA_URL"], "")
         self.assertEqual(env["KIOSK_BROWSER_URL"], "")
+        self.assertEqual(env["KIOSK_BROWSER_LAUNCH_POLICY"], "always_new_tab")
         self.assertEqual(env["KIOSK_HA_BROWSER_PACKAGE"], "org.mozilla.fennec_fdroid")
         self.assertEqual(env["ROOT_ACCESS"], "")
         self.assertEqual(env["SYSTEM_UI_NIGHT_MODE"], "auto")
@@ -68,6 +69,8 @@ class KioskCtlTests(unittest.TestCase):
                 "kiosk:\n"
                 "  launch:\n"
                 "    home_assistant_url: http://192.168.29.111:8123/\n"
+                "    browser_url: https://duckduckgo.com/\n"
+                "    browser_launch_policy: seed_once\n"
                 "  theme:\n"
                 "    title: Kitchen\n"
                 "    background:\n"
@@ -80,6 +83,8 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(profile["kiosk"]["theme"]["title"], "Kitchen")
         self.assertEqual(profile["kiosk"]["theme"]["background"]["scrim_color"], "#66000000")
         self.assertEqual(profile["kiosk"]["launch"]["home_assistant_url"], "http://192.168.29.111:8123/")
+        self.assertEqual(profile["kiosk"]["launch"]["browser_url"], "https://duckduckgo.com/")
+        self.assertEqual(kioskctl.kiosk_launch(profile)["browser_launch_policy"], "seed_once")
         self.assertEqual(profile["kiosk"]["theme"]["buttons"]["radius_dp"], 6)
         self.assertEqual(profile["_profile_overlay_path"].split("/")[-1], "site.yaml")
 
@@ -88,6 +93,16 @@ class KioskCtlTests(unittest.TestCase):
         profile["kiosk"]["launch"] = {"home_assistant_url": "/lovelace"}
 
         with self.assertRaisesRegex(ValueError, "absolute http or https URL"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_kiosk_launch_rejects_unknown_browser_launch_policy(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["kiosk"]["launch"] = {
+            "browser_url": "https://duckduckgo.com/",
+            "browser_launch_policy": "teleport",
+        }
+
+        with self.assertRaisesRegex(ValueError, "browser_launch_policy"):
             kioskctl.validate_profile_shape(profile)
 
     def test_debug_root_access_maps_adb_to_lineage_value(self) -> None:
