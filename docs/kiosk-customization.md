@@ -30,7 +30,28 @@ make publish-flash-bundle PROFILE_OVERLAY=profiles/local/site.yaml
 - `background.fit`: `cover`, `contain`, `stretch`, or `height` for video-only height-crop
 - `background.loop`, `fallback_color`, and `scrim_color`
 - `text.color`, `subtitle_color`, sizes, and optional shadow controls
-- `buttons.*` labels, fill/text/border colors, text size, radius, height, and width
+- `buttons.*` fallback labels plus icon-tile fill/text/border colors, radius, height, and width
+
+`kiosk.pinned_apps` controls the home-screen icon row. Each entry references an existing `apps.*` key and supplies the accessibility/fallback label:
+
+```yaml
+kiosk:
+  pinned_apps:
+    - app: home_assistant
+      label: Home Assistant
+    - app: browser
+      label: Browser
+    - app: youtube
+      label: YouTube
+    - app: music
+      label: Music
+    - app: notes
+      label: Notes
+    - app: weather
+      label: Weather
+```
+
+The Home Assistant and Browser entries keep their special URL/session behavior. Other pinned apps launch their Android packages directly. App icons are loaded from the installed packages at runtime; labels remain available for accessibility and fallback handling.
 
 `kiosk.launch` supports optional local URLs:
 
@@ -42,6 +63,23 @@ make publish-flash-bundle PROFILE_OVERLAY=profiles/local/site.yaml
 `system.ui_night_mode` controls the Android default night mode and accepts `'yes'`, `'no'`, or `auto`. Quote `yes` and `no` because YAML otherwise treats them as booleans. The public profile uses `auto`; site overlays can set `'yes'` for a dark default.
 
 `system.keyboard_theme` controls the built-in LatinIME keyboard theme during the root-backed app-defaults step. Use `dark`, `light`, or `default`; omit it to keep the stock keyboard preference. This belongs in a local overlay when you want a site-specific default.
+
+`system.time` and `system.location` control image defaults and post-update runtime defaults:
+
+```yaml
+system:
+  time:
+    auto_time: true
+    auto_time_zone: false
+    timezone: America/Los_Angeles
+    ntp_server: pool.ntp.org
+  location:
+    providers_allowed:
+      - gps
+      - network
+```
+
+Use an explicit `timezone` when the tablet has Wi-Fi but no mobile network timezone source. Enabling `network` only enables Android's provider setting; this no-GMS image does not include a Wi-Fi/cell network location backend.
 
 `apps.browser.runtime_defaults` controls root-backed browser preferences applied after Android boots. It is opt-in; omit it to leave browser app data alone. With the default Fennec APK, a dark local overlay can use:
 

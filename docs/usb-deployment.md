@@ -69,13 +69,13 @@ After that image is installed once, future non-wipe updates can use `INSTALL_MOD
 
 ## Runtime Defaults
 
-Fresh installs read `system.ui_night_mode` from the image overlay. Non-wipe updates preserve existing `/data` settings, so `deploy-tablet` also applies the configured profile value after Android boots. To apply the system defaults without flashing:
+Fresh installs read `system.ui_night_mode`, `system.time`, and `system.location` from the image overlay. Non-wipe updates preserve existing `/data` settings, so `deploy-tablet` also applies the configured profile values after Android boots. To apply the system defaults without flashing:
 
 ```bash
 make device-apply-system-defaults SERIAL=<serial> PROFILE_OVERLAY=profiles/local/site.yaml
 ```
 
-Fennec browser chrome, website color-scheme preferences, and LatinIME keyboard theme live under app data, so they require `adb root` and are applied only when configured in a local overlay. To apply the app runtime defaults without flashing:
+Runtime permission grants are applied from `apps.*.runtime_permissions`; the default profile grants coarse/fine location to Home Assistant and Breezy Weather. Fennec browser chrome, website color-scheme preferences, and LatinIME keyboard theme live under app data, so they require `adb root` and are applied only when configured in a local overlay. To apply the app runtime defaults without flashing:
 
 ```bash
 make device-apply-app-defaults SERIAL=<serial> PROFILE_OVERLAY=profiles/local/site.yaml

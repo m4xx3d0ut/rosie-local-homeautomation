@@ -6,6 +6,16 @@ system:
   ui_night_mode: auto
   # Optional root-backed keyboard theme; requires debug.root_access: adb.
   # keyboard_theme: dark
+  # Optional local time/location defaults for images without mobile network timezone inference.
+  time:
+    auto_time: true
+    auto_time_zone: false
+    timezone: America/Los_Angeles
+    ntp_server: pool.ntp.org
+  location:
+    providers_allowed:
+      - gps
+      - network
 # Optional root-backed browser runtime defaults; requires debug.root_access: adb.
 # apps:
 #   browser:
@@ -15,6 +25,20 @@ system:
 # To isolate Home Assistant tabs from general browsing, add an optional
 # apps.home_assistant_browser entry that points at a second browser APK.
 kiosk:
+  # Optional: override the app icon row order/accessibility labels. Each app must exist under apps.*.
+  pinned_apps:
+    - app: home_assistant
+      label: Home Assistant
+    - app: browser
+      label: Browser
+    - app: youtube
+      label: YouTube
+    - app: music
+      label: Music
+    - app: notes
+      label: Notes
+    - app: weather
+      label: Weather
   launch:
     home_assistant_url: http://homeassistant.local:8123/
     browser_url: https://duckduckgo.com/

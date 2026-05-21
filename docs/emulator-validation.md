@@ -27,14 +27,16 @@ The validator cold-boots the `sdk_phone_x86` companion target with the pinned SD
 
 - Home Assistant minimal package is installed and launchable.
 - The emulator-compatible browser package is installed and launchable.
+- Profile-pinned apps are installed.
 - The generated `RosieKioskLauncher` package is installed and owns the HOME intent.
 - First-run setup is already marked complete.
+- Profile time, timezone, NTP, location-provider, and runtime permission defaults are present.
 - Profile-listed Lineage setup/home packages are absent.
 - Google Play Services and Play Store packages are absent.
-- Logs, package list, and a final screenshot are captured.
+- Logs, package list, a kiosk home screenshot, and a final screenshot are captured.
 
 The Shield K1 tablet image still uses the ARM Fennec F-Droid APK. The emulator companion uses `apps.emulator_browser` from the profile because current Fennec F-Droid APKs are ARM-only.
 
-When `PROFILE_OVERLAY` is set, emulator validation uses the same merged kiosk theme and private assets as the tablet build. The final screenshot in `dist/<build-id>/screenshots/` is the primary visual evidence for image/video background and style checks.
+When `PROFILE_OVERLAY` is set, emulator validation uses the same merged kiosk theme and private assets as the tablet build. Review `dist/<build-id>/screenshots/kiosk-home.png` for app-row layout and scale; `final.png` remains secondary evidence after launch smoke checks.
 
 The result is written to `EMULATOR-VALIDATION.json`. `make publish-flash-bundle` refuses to publish if this file is missing or does not contain `"status": "pass"`.

@@ -41,7 +41,8 @@ The tablet image includes:
 - Home Assistant Companion minimal APK
 - Fennec F-Droid browser APK by default for the ARM tablet target
 - Privacy Browser APK by default for the x86 emulator target
-- `RosieKioskLauncher`, a native launcher with two buttons: Home Assistant and Browser
+- NewPipe, Kreate, Joplin, and Breezy Weather open-source APKs for local media, notes, and weather access
+- `RosieKioskLauncher`, a native launcher with a configurable pinned app row
 - Development defaults for ADB, setup completion, disabled lockscreen, dark UI mode, and kiosk HOME selection
 
 The repository does not commit APK binaries, vendor blobs, private assets, host ADB keys, or generated images.
@@ -213,11 +214,11 @@ make validate-inputs PROFILE_OVERLAY=profiles/local/site.yaml
 make build-images PROFILE_OVERLAY=profiles/local/site.yaml
 ```
 
-The overlay system supports local text, colors, button sizing, image or video backgrounds, Android UI night mode, opt-in browser and keyboard theme defaults, launch URLs, and Android ARGB colors such as `#CC2c2c2c`. Private assets belong under `inputs/kiosk-assets/` and should be pinned in the overlay with `sha256sum`.
+The overlay system supports local text, colors, icon-tile sizing, a configurable pinned app row, image or video backgrounds, Android UI night mode, time/timezone/location defaults, opt-in browser and keyboard theme defaults, launch URLs, and Android ARGB colors such as `#CC2c2c2c`. Private assets belong under `inputs/kiosk-assets/` and should be pinned in the overlay with `sha256sum`.
 
 When `kiosk.launch.home_assistant_url` and `kiosk.launch.browser_url` both target the default Fennec browser, the Home Assistant button opens HA in a Fennec Custom Tab while the Browser button follows `kiosk.launch.browser_launch_policy`. Use `seed_once` in a local overlay to open a starter page such as `https://duckduckgo.com/` only on first Browser entry, then resume the existing browser session. For stronger process-level separation, configure an optional `apps.home_assistant_browser` APK; the Home Assistant button then targets that package instead.
 
-If a local development profile uses `debug.root_access: adb` and configures runtime theme defaults, deployment also applies those app-data settings under `/data`, such as Fennec chrome theme, website `prefers-color-scheme`, and the built-in LatinIME keyboard theme.
+If a local development profile uses `debug.root_access: adb` and configures runtime theme defaults, deployment also applies those app-data settings under `/data`, such as Fennec chrome theme, website `prefers-color-scheme`, and the built-in LatinIME keyboard theme. Time, timezone, NTP, location-provider, and runtime permission defaults are also re-applied after non-wipe updates because `/data` settings survive OTA-style deploys.
 
 Do not commit local overlays, private media, Home Assistant secrets, Wi-Fi credentials, vendor blobs, APK binaries, or release signing keys.
 
