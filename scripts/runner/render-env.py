@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import argparse
 import copy
+import json
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -43,6 +45,10 @@ DEFAULT_THEME = {
         "width_dp": 520,
     },
 }
+DEFAULT_PINNED_APPS = [
+    {"app": "home_assistant", "label": "Home Assistant"},
+    {"app": "browser", "label": "Browser"},
+]
 
 
 def load_mapping(path):
@@ -101,6 +107,60 @@ def launch_for(profile):
     }
 
 
+def pinned_apps_for(profile):
+    kiosk = profile.get("kiosk") or {}
+    pinned = kiosk.get("pinned_apps")
+    if pinned is None:
+        theme = theme_for(profile)
+        buttons = theme["buttons"]
+        pinned = [
+            {"app": "home_assistant", "label": str(buttons["home_assistant_label"])},
+            {"app": "browser", "label": str(buttons["browser_label"])},
+        ]
+    apps = profile.get("apps") or {}
+    result = []
+    for item in pinned:
+        app_key = str(item["app"])
+        app = apps[app_key]
+        result.append(
+            {
+                "app": app_key,
+                "label": str(item["label"]),
+                "package": str(app["package"]),
+            }
+        )
+    return result
+
+
+def extra_pinned_app_keys(profile):
+    special = {"home_assistant", "browser", "home_assistant_browser", "emulator_browser"}
+    keys = []
+    for item in pinned_apps_for(profile):
+        key = item["app"]
+        if key not in special and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def extra_pinned_apps_json(profile):
+    payload = []
+    for key in extra_pinned_app_keys(profile):
+        app = profile["apps"][key]
+        payload.append(
+            {
+                "app": key,
+                "module": str(app["module"]),
+                "package": str(app["package"]),
+                "apk": str(app["apk"]),
+            }
+        )
+    return json.dumps(payload, sort_keys=True)
+
+
+def module_list(profile, keys):
+    return " ".join(str(profile["apps"][key]["module"]) for key in keys)
+
+
 ROOT_ACCESS_VALUES = {
     "disabled": "",
     "none": "0",
@@ -128,6 +188,20 @@ UI_NIGHT_MODE_NAMES = {
     "1": "no",
     "2": "yes",
 }
+BOOLEAN_CONFIG_VALUES = {
+    True: True,
+    False: False,
+    "1": True,
+    "true": True,
+    "yes": True,
+    "on": True,
+    "0": False,
+    "false": False,
+    "no": False,
+    "off": False,
+}
+LOCATION_PROVIDER_VALUES = {"gps", "network"}
+RUNTIME_PERMISSION_RE = re.compile(r"^android\.permission\.[A-Z0-9_]+$")
 
 
 def root_access_value(profile):
@@ -152,6 +226,107 @@ def ui_night_mode_name(profile):
     return UI_NIGHT_MODE_NAMES[ui_night_mode_value(profile)]
 
 
+def bool_config_value(value, name, default):
+    raw = default if value is None else value
+    key = raw if isinstance(raw, bool) else str(raw).strip().lower()
+    if key not in BOOLEAN_CONFIG_VALUES:
+        raise ValueError("{} must be a boolean".format(name))
+    return BOOLEAN_CONFIG_VALUES[key]
+
+
+def bool_setting_value(value):
+    return "1" if value else "0"
+
+
+def bool_xml_value(value):
+    return "true" if value else "false"
+
+
+def system_time_config(profile):
+    config = (profile.get("system") or {}).get("time")
+    return config if isinstance(config, dict) else {}
+
+
+def system_auto_time(profile):
+    return bool_config_value(system_time_config(profile).get("auto_time"), "system.time.auto_time", True)
+
+
+def system_auto_time_zone(profile):
+    return bool_config_value(
+        system_time_config(profile).get("auto_time_zone"),
+        "system.time.auto_time_zone",
+        True,
+    )
+
+
+def system_timezone(profile):
+    value = str(system_time_config(profile).get("timezone") or "").strip()
+    if not value:
+        return ""
+    if value not in ("UTC", "GMT") and not re.match(r"^[A-Za-z_]+/[A-Za-z0-9_+./-]+$", value):
+        raise ValueError("system.time.timezone must be an IANA timezone such as America/Los_Angeles")
+    return value
+
+
+def system_ntp_server(profile):
+    value = str(system_time_config(profile).get("ntp_server") or "pool.ntp.org").strip()
+    if not value or re.search(r"\s", value):
+        raise ValueError("system.time.ntp_server must be a hostname or IP address")
+    return value
+
+
+def location_providers_allowed(profile):
+    raw = ((profile.get("system") or {}).get("location") or {}).get("providers_allowed", ["gps"])
+    if isinstance(raw, str):
+        values = [item.strip().lower() for item in raw.split(",")]
+    elif isinstance(raw, list):
+        values = [str(item).strip().lower() for item in raw]
+    else:
+        raise ValueError("system.location.providers_allowed must be a list or comma-separated string")
+    providers = []
+    for provider in values:
+        if not provider:
+            continue
+        if provider not in LOCATION_PROVIDER_VALUES:
+            raise ValueError("system.location.providers_allowed entries must be one of: gps, network")
+        if provider not in providers:
+            providers.append(provider)
+    return providers
+
+
+def runtime_permission_grants(profile):
+    grants = []
+    for app_name, app in (profile.get("apps") or {}).items():
+        if not isinstance(app, dict):
+            continue
+        raw = app.get("runtime_permissions", [])
+        if raw is None:
+            continue
+        if not isinstance(raw, list):
+            raise ValueError("apps.{}.runtime_permissions must be a list".format(app_name))
+        permissions = []
+        for index, item in enumerate(raw):
+            permission = str(item).strip()
+            if not permission or not RUNTIME_PERMISSION_RE.match(permission):
+                raise ValueError(
+                    "apps.{}.runtime_permissions[{}] must be an android.permission.* name".format(
+                        app_name,
+                        index,
+                    )
+                )
+            if permission not in permissions:
+                permissions.append(permission)
+        if permissions:
+            grants.append(
+                {
+                    "app": str(app_name),
+                    "package": str(app.get("package") or ""),
+                    "permissions": permissions,
+                }
+            )
+    return grants
+
+
 def env_for(profile, repo_root, container):
     paths = profile["paths"]
     android_root = "/android" if container else str((repo_root / paths["android_root"]).resolve())
@@ -159,6 +334,7 @@ def env_for(profile, repo_root, container):
     artifacts = "/artifacts" if container else str((repo_root / paths["dist"]).resolve())
     emulator_browser = profile["apps"].get("emulator_browser", profile["apps"]["browser"])
     ha_browser = profile["apps"].get("home_assistant_browser", {})
+    extra_app_keys = extra_pinned_app_keys(profile)
     kiosk = profile.get("kiosk", {})
     kiosk_launcher = kiosk.get("launcher", {})
     theme = theme_for(profile)
@@ -196,6 +372,10 @@ def env_for(profile, repo_root, container):
         "EMULATOR_BROWSER_PACKAGE": str(emulator_browser["package"]),
         "EMULATOR_BROWSER_APK": str(emulator_browser["apk"]),
         "EMULATOR_BROWSER_SHA256": str(emulator_browser["sha256"]),
+        "BROWSER_FALLBACK_PACKAGE": str(emulator_browser["package"]),
+        "KIOSK_EXTRA_APPS_JSON": extra_pinned_apps_json(profile),
+        "KIOSK_EXTRA_APP_MODULES": module_list(profile, extra_app_keys),
+        "KIOSK_EXTRA_APP_PACKAGES": " ".join(str(profile["apps"][key]["package"]) for key in extra_app_keys),
         "KIOSK_LAUNCHER_MODULE": str(kiosk_launcher.get("module", "RosieKioskLauncher")),
         "KIOSK_LAUNCHER_PACKAGE": str(kiosk_launcher.get("package", "local.rosie.kiosk")),
         "KIOSK_REMOVE_MODULES": " ".join(kiosk.get("remove_modules", [])),
@@ -232,12 +412,21 @@ def env_for(profile, repo_root, container):
         "KIOSK_BROWSER_URL": str(launch["browser_url"]),
         "KIOSK_BROWSER_LAUNCH_POLICY": str(launch["browser_launch_policy"]),
         "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
+        "KIOSK_PINNED_APPS_JSON": json.dumps(pinned_apps_for(profile), sort_keys=True),
         "BLOB_ARCHIVE": str(profile["blobs"]["archive"]),
         "BLOB_SHA256": str(profile["blobs"]["sha256"]),
         "ADB_PUBLIC_KEY": str((profile.get("debug") or {}).get("adb_public_key", "")),
         "ROOT_ACCESS": root_access_value(profile),
         "SYSTEM_UI_NIGHT_MODE": ui_night_mode_name(profile),
         "SYSTEM_UI_NIGHT_MODE_VALUE": ui_night_mode_value(profile),
+        "SYSTEM_AUTO_TIME": bool_xml_value(system_auto_time(profile)),
+        "SYSTEM_AUTO_TIME_VALUE": bool_setting_value(system_auto_time(profile)),
+        "SYSTEM_AUTO_TIME_ZONE": bool_xml_value(system_auto_time_zone(profile)),
+        "SYSTEM_AUTO_TIME_ZONE_VALUE": bool_setting_value(system_auto_time_zone(profile)),
+        "SYSTEM_TIMEZONE": system_timezone(profile),
+        "SYSTEM_NTP_SERVER": system_ntp_server(profile),
+        "SYSTEM_LOCATION_PROVIDERS_ALLOWED": ",".join(location_providers_allowed(profile)),
+        "APP_RUNTIME_PERMISSION_GRANTS_JSON": json.dumps(runtime_permission_grants(profile), sort_keys=True),
         "ANDROID_API_LEVEL": str(profile.get("android", {}).get("api_level", "")),
         "ANDROID_ABI": str(profile.get("android", {}).get("abi", "")),
         "ANDROID_ROOT": android_root,

@@ -49,8 +49,21 @@ KIOSK_HA_URL="${KIOSK_HA_URL:-}"
 KIOSK_BROWSER_URL="${KIOSK_BROWSER_URL:-}"
 KIOSK_BROWSER_LAUNCH_POLICY="${KIOSK_BROWSER_LAUNCH_POLICY:-always_new_tab}"
 KIOSK_HA_BROWSER_PACKAGE="${KIOSK_HA_BROWSER_PACKAGE:-${HA_BROWSER_PACKAGE:-${BROWSER_PACKAGE}}}"
+KIOSK_PINNED_APPS_JSON="${KIOSK_PINNED_APPS_JSON:-[]}"
+KIOSK_EXTRA_APPS_JSON="${KIOSK_EXTRA_APPS_JSON:-[]}"
+KIOSK_EXTRA_APP_MODULES="${KIOSK_EXTRA_APP_MODULES:-}"
+KIOSK_EXTRA_APP_PACKAGES="${KIOSK_EXTRA_APP_PACKAGES:-}"
+BROWSER_FALLBACK_PACKAGE="${BROWSER_FALLBACK_PACKAGE:-${BROWSER_PACKAGE}}"
 SYSTEM_UI_NIGHT_MODE="${SYSTEM_UI_NIGHT_MODE:-auto}"
 SYSTEM_UI_NIGHT_MODE_VALUE="${SYSTEM_UI_NIGHT_MODE_VALUE:-0}"
+SYSTEM_AUTO_TIME="${SYSTEM_AUTO_TIME:-true}"
+SYSTEM_AUTO_TIME_VALUE="${SYSTEM_AUTO_TIME_VALUE:-1}"
+SYSTEM_AUTO_TIME_ZONE="${SYSTEM_AUTO_TIME_ZONE:-true}"
+SYSTEM_AUTO_TIME_ZONE_VALUE="${SYSTEM_AUTO_TIME_ZONE_VALUE:-1}"
+SYSTEM_TIMEZONE="${SYSTEM_TIMEZONE:-}"
+SYSTEM_NTP_SERVER="${SYSTEM_NTP_SERVER:-pool.ntp.org}"
+SYSTEM_LOCATION_PROVIDERS_ALLOWED="${SYSTEM_LOCATION_PROVIDERS_ALLOWED:-gps}"
+APP_RUNTIME_PERMISSION_GRANTS_JSON="${APP_RUNTIME_PERMISSION_GRANTS_JSON:-[]}"
 export \
   HA_PACKAGE \
   BROWSER_PACKAGE \
@@ -86,13 +99,27 @@ export \
   KIOSK_HA_URL \
   KIOSK_BROWSER_URL \
   KIOSK_BROWSER_LAUNCH_POLICY \
-  KIOSK_HA_BROWSER_PACKAGE
+  KIOSK_HA_BROWSER_PACKAGE \
+  KIOSK_PINNED_APPS_JSON \
+  KIOSK_EXTRA_APPS_JSON \
+  KIOSK_EXTRA_APP_MODULES \
+  KIOSK_EXTRA_APP_PACKAGES \
+  BROWSER_FALLBACK_PACKAGE \
+  SYSTEM_AUTO_TIME \
+  SYSTEM_AUTO_TIME_VALUE \
+  SYSTEM_AUTO_TIME_ZONE \
+  SYSTEM_AUTO_TIME_ZONE_VALUE \
+  SYSTEM_TIMEZONE \
+  SYSTEM_NTP_SERVER \
+  SYSTEM_LOCATION_PROVIDERS_ALLOWED \
+  APP_RUNTIME_PERMISSION_GRANTS_JSON
 
 ROSIE_VENDOR="${ANDROID_ROOT}/vendor/rosie"
 APP_DIR="${ROSIE_VENDOR}/prebuilt_apps"
 KIOSK_DIR="${ROSIE_VENDOR}/kiosk_launcher"
 PRODUCT_DIR="${ROSIE_VENDOR}/product"
 ADB_DIR="${ROSIE_VENDOR}/adb"
+DEFAULT_PERMISSIONS_DIR="${ROSIE_VENDOR}/default-permissions"
 OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/core/res/res/values"
 SETTINGS_OVERLAY_VALUES_DIR="${ROSIE_VENDOR}/overlay/frameworks/base/packages/SettingsProvider/res/values"
 ROOT_ACCESS="${ROOT_ACCESS:-}"
@@ -107,11 +134,23 @@ mkdir -p \
   "${KIOSK_DIR}/src/${KIOSK_LAUNCHER_PACKAGE//.//}" \
   "${PRODUCT_DIR}" \
   "${ADB_DIR}" \
+  "${DEFAULT_PERMISSIONS_DIR}" \
   "${OVERLAY_VALUES_DIR}" \
   "${SETTINGS_OVERLAY_VALUES_DIR}"
 if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${EMULATOR_BROWSER_MODULE}" ]]; then
   mkdir -p "${APP_DIR}/${HA_BROWSER_MODULE}"
 fi
+python3 - "${APP_DIR}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+app_dir = Path(sys.argv[1])
+for app in json.loads(os.environ.get("KIOSK_EXTRA_APPS_JSON", "[]")):
+    module = app["module"]
+    (app_dir / module).mkdir(parents=True, exist_ok=True)
+PY
 cp "${REPO_ROOT}/${HA_APK}" "${APP_DIR}/${HA_MODULE}/${HA_MODULE}.apk"
 cp "${REPO_ROOT}/${BROWSER_APK}" "${APP_DIR}/${BROWSER_MODULE}/${BROWSER_MODULE}.apk"
 if [[ "${EMULATOR_BROWSER_MODULE}" != "${BROWSER_MODULE}" ]]; then
@@ -124,6 +163,23 @@ if [[ -n "${HA_BROWSER_MODULE}" && "${HA_BROWSER_MODULE}" != "${BROWSER_MODULE}"
   fi
   cp "${REPO_ROOT}/${HA_BROWSER_APK}" "${APP_DIR}/${HA_BROWSER_MODULE}/${HA_BROWSER_MODULE}.apk"
 fi
+python3 - "${APP_DIR}" <<'PY'
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+app_dir = Path(sys.argv[1])
+repo_root = Path(os.environ["REPO_ROOT"])
+for app in json.loads(os.environ.get("KIOSK_EXTRA_APPS_JSON", "[]")):
+    module = app["module"]
+    apk = repo_root / app["apk"]
+    if not apk.is_file():
+        print(f"missing pinned app APK: {apk}", file=sys.stderr)
+        raise SystemExit(1)
+    shutil.copy2(apk, app_dir / module / f"{module}.apk")
+PY
 if [[ -n "${ADB_PUBLIC_KEY:-}" ]]; then
   if [[ ! -f "${REPO_ROOT}/${ADB_PUBLIC_KEY}" ]]; then
     echo "missing adb public key: ${REPO_ROOT}/${ADB_PUBLIC_KEY}" >&2
@@ -327,6 +383,26 @@ LOCAL_PRODUCT_MODULE := true
 include \$(BUILD_PREBUILT)
 EOF_MK
 fi
+python3 - <<'PY'
+import json
+import os
+
+for app in json.loads(os.environ.get("KIOSK_EXTRA_APPS_JSON", "[]")):
+    module = app["module"]
+    print(
+        f"""
+include $(CLEAR_VARS)
+LOCAL_MODULE := {module}
+LOCAL_SRC_FILES := {module}/{module}.apk
+LOCAL_MODULE_CLASS := APPS
+LOCAL_MODULE_SUFFIX := $(COMMON_ANDROID_PACKAGE_SUFFIX)
+LOCAL_CERTIFICATE := PRESIGNED
+LOCAL_MODULE_TAGS := optional
+LOCAL_DEX_PREOPT := false
+LOCAL_PRODUCT_MODULE := true
+include $(BUILD_PREBUILT)""".rstrip()
+    )
+PY
 } | write_if_changed "${APP_DIR}/Android.mk"
 
 write_if_changed "${KIOSK_DIR}/Android.mk" <<EOF_MK
@@ -450,14 +526,31 @@ else:
         return null;
     }
 """
+pinned_apps = json.loads(os.environ.get("KIOSK_PINNED_APPS_JSON", "[]"))
+if not pinned_apps:
+    pinned_apps = [
+        {"app": "home_assistant", "label": os.environ["KIOSK_BUTTON_HA_LABEL"], "package": os.environ["HA_PACKAGE"]},
+        {"app": "browser", "label": os.environ["KIOSK_BUTTON_BROWSER_LABEL"], "package": os.environ["BROWSER_PACKAGE"]},
+    ]
+
+
+def java_array(values):
+    return "new String[] {" + ", ".join(j(value) for value in values) + "}"
+
+
+pinned_keys = java_array([app["app"] for app in pinned_apps])
+pinned_labels = java_array([app["label"] for app in pinned_apps])
+pinned_packages = java_array([app["package"] for app in pinned_apps])
 content = f"""package {package_name};
 
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.media.MediaPlayer;
@@ -468,7 +561,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -479,7 +571,11 @@ import android.widget.VideoView;
 public class LauncherActivity extends Activity {{
     private static final String HA_PACKAGE = {j(os.environ["HA_PACKAGE"])};
     private static final String BROWSER_PACKAGE = {j(os.environ["BROWSER_PACKAGE"])};
+    private static final String BROWSER_FALLBACK_PACKAGE = {j(os.environ["BROWSER_FALLBACK_PACKAGE"])};
     private static final String HA_BROWSER_PACKAGE = {j(os.environ["KIOSK_HA_BROWSER_PACKAGE"])};
+    private static final String[] PINNED_APP_KEYS = {pinned_keys};
+    private static final String[] PINNED_APP_LABELS = {pinned_labels};
+    private static final String[] PINNED_APP_PACKAGES = {pinned_packages};
     private static final String TITLE = {j(os.environ["KIOSK_TITLE"])};
     private static final String SUBTITLE = {j(os.environ["KIOSK_SUBTITLE"])};
     private static final String FONT_FAMILY = {j(os.environ["KIOSK_FONT_FAMILY"])};
@@ -556,7 +652,8 @@ public class LauncherActivity extends Activity {{
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER);
-        content.setPadding(dp(64), dp(48), dp(64), dp(48));
+        int horizontalPadding = dp(contentHorizontalPaddingDp());
+        content.setPadding(horizontalPadding, dp(48), horizontalPadding, dp(48));
 
         Typeface typeface = Typeface.create(FONT_FAMILY, Typeface.NORMAL);
         Typeface titleTypeface = Typeface.create(FONT_FAMILY, Typeface.BOLD);
@@ -586,8 +683,9 @@ public class LauncherActivity extends Activity {{
         subtitleParams.setMargins(0, dp(10), 0, dp(36));
         content.addView(subtitle, subtitleParams);
 
-        content.addView(appButton(HA_LABEL, "ha", typeface));
-        content.addView(appButton(BROWSER_LABEL, "browser", typeface));
+        content.addView(pinnedAppRow(), new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -675,38 +773,141 @@ public class LauncherActivity extends Activity {{
                 Color.parseColor(TEXT_SHADOW_COLOR));
     }}
 
-    private Button appButton(String label, final String action, Typeface typeface) {{
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextColor(Color.parseColor(BUTTON_TEXT_COLOR));
-        button.setTextSize(BUTTON_TEXT_SIZE_SP);
-        button.setTypeface(typeface, Typeface.BOLD);
-        button.setAllCaps(false);
-        button.setGravity(Gravity.CENTER);
-        button.setIncludeFontPadding(false);
-        button.setPadding(dp(28), 0, dp(28), 0);
-        button.setMinHeight(dp(BUTTON_MIN_HEIGHT_DP));
-        button.setMinimumHeight(dp(BUTTON_MIN_HEIGHT_DP));
-        button.setElevation(dp(2));
-        button.setBackground(buttonBackground());
-        button.setOnClickListener(new View.OnClickListener() {{
+    private View pinnedAppRow() {{
+        LinearLayout shelf = new LinearLayout(this);
+        shelf.setOrientation(LinearLayout.VERTICAL);
+        shelf.setGravity(Gravity.CENTER);
+        shelf.setPadding(dp(4), 0, dp(4), 0);
+
+        int columns = pinnedColumnCount();
+        LinearLayout row = null;
+        for (int i = 0; i < PINNED_APP_KEYS.length; i++) {{
+            if (i % columns == 0) {{
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER);
+                shelf.addView(row, new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
+            }}
+            row.addView(appTile(
+                    PINNED_APP_LABELS[i],
+                    PINNED_APP_KEYS[i],
+                    PINNED_APP_PACKAGES[i]));
+        }}
+        return shelf;
+    }}
+
+    private View appTile(String label, final String action, final String packageName) {{
+        FrameLayout tile = new FrameLayout(this);
+        tile.setContentDescription(label);
+        tile.setClickable(true);
+        tile.setFocusable(true);
+        tile.setPadding(dp(12), dp(10), dp(12), dp(10));
+        tile.setMinimumHeight(dp(BUTTON_MIN_HEIGHT_DP));
+        tile.setElevation(dp(2));
+        tile.setBackground(buttonBackground());
+        tile.setOnClickListener(new View.OnClickListener() {{
             @Override
             public void onClick(View view) {{
-                if ("ha".equals(action)) {{
+                if ("home_assistant".equals(action)) {{
                     launchHomeAssistant();
-                }} else {{
+                }} else if ("browser".equals(action)) {{
                     launchBrowser();
+                }} else {{
+                    launchPackage(packageName);
                 }}
             }}
         }});
-        int available = Math.max(dp(240), getResources().getDisplayMetrics().widthPixels - dp(128));
-        int targetWidth = Math.min(available, dp(BUTTON_WIDTH_DP));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageDrawable(appIcon(packageName));
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setAdjustViewBounds(true);
+        icon.setContentDescription(null);
+        int iconSize = pinnedIconSize();
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(
+                iconSize,
+                iconSize,
+                Gravity.CENTER);
+        tile.addView(icon, iconParams);
+
+        int targetWidth = pinnedButtonWidth();
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 targetWidth,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, dp(10), 0, dp(10));
-        button.setLayoutParams(params);
-        return button;
+                pinnedButtonHeight());
+        int horizontalMargin = dp(pinnedButtonHorizontalMarginDp());
+        params.setMargins(horizontalMargin, dp(10), horizontalMargin, dp(10));
+        tile.setLayoutParams(params);
+        return tile;
+    }}
+
+    private int pinnedButtonWidth() {{
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int columns = pinnedColumnCount();
+        int horizontalPadding = dp(contentHorizontalPaddingDp() * 2);
+        int shelfPadding = dp(8);
+        int buttonMargins = columns * dp(pinnedButtonHorizontalMarginDp() * 2);
+        int available = Math.max(dp(72), screenWidth - horizontalPadding - shelfPadding - buttonMargins);
+        int rowWidth = Math.max(dp(84), available / columns);
+        return Math.min(dp(BUTTON_WIDTH_DP), rowWidth);
+    }}
+
+    private int pinnedButtonHeight() {{
+        int width = pinnedButtonWidth();
+        return Math.max(dp(BUTTON_MIN_HEIGHT_DP), Math.min(dp(112), width));
+    }}
+
+    private int pinnedIconSize() {{
+        int width = pinnedButtonWidth();
+        return Math.max(dp(44), Math.min(dp(72), width - dp(48)));
+    }}
+
+    private Drawable appIcon(String packageName) {{
+        PackageManager packageManager = getPackageManager();
+        try {{
+            return packageManager.getApplicationIcon(packageName);
+        }} catch (PackageManager.NameNotFoundException firstError) {{
+            if (packageName.equals(BROWSER_PACKAGE) && !BROWSER_FALLBACK_PACKAGE.equals(BROWSER_PACKAGE)) {{
+                try {{
+                    return packageManager.getApplicationIcon(BROWSER_FALLBACK_PACKAGE);
+                }} catch (PackageManager.NameNotFoundException ignored) {{
+                    // Use the launcher icon fallback below.
+                }}
+            }}
+            try {{
+                return packageManager.getApplicationIcon(getPackageName());
+            }} catch (PackageManager.NameNotFoundException ignored) {{
+                return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
+            }}
+        }}
+    }}
+
+    private int contentHorizontalPaddingDp() {{
+        int screenWidthDp = getResources().getConfiguration().screenWidthDp;
+        if (screenWidthDp < 480) {{
+            return 24;
+        }}
+        if (screenWidthDp < 720) {{
+            return 40;
+        }}
+        return 64;
+    }}
+
+    private int pinnedButtonHorizontalMarginDp() {{
+        return pinnedColumnCount() >= 4 ? 6 : 4;
+    }}
+
+    private int pinnedColumnCount() {{
+        int screenWidthDp = getResources().getConfiguration().screenWidthDp;
+        int appCount = Math.max(PINNED_APP_KEYS.length, 1);
+        if (screenWidthDp >= 720) {{
+            return Math.min(appCount, 6);
+        }}
+        if (screenWidthDp >= 600) {{
+            return Math.min(appCount, 4);
+        }}
+        return Math.min(appCount, 3);
     }}
 
     private StateListDrawable buttonBackground() {{
@@ -727,6 +928,9 @@ public class LauncherActivity extends Activity {{
 
     private void launchPackage(String packageName) {{
         Intent intent = getPackageManager().getLaunchIntentForPackage(packageName);
+        if (intent == null && packageName.equals(BROWSER_PACKAGE) && !BROWSER_FALLBACK_PACKAGE.equals(BROWSER_PACKAGE)) {{
+            intent = getPackageManager().getLaunchIntentForPackage(BROWSER_FALLBACK_PACKAGE);
+        }}
         if (intent == null) {{
             Toast.makeText(this, "App is not available", Toast.LENGTH_SHORT).show();
             return;
@@ -800,6 +1004,21 @@ public class LauncherActivity extends Activity {{
             startActivity(intent);
             return true;
         }} catch (Exception firstError) {{
+            if (preferredPackage.equals(BROWSER_PACKAGE) && !BROWSER_FALLBACK_PACKAGE.equals(BROWSER_PACKAGE)) {{
+                Intent browserFallback = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                browserFallback.addCategory(Intent.CATEGORY_BROWSABLE);
+                browserFallback.addFlags(flags);
+                browserFallback.setPackage(BROWSER_FALLBACK_PACKAGE);
+                if (createNewTab) {{
+                    browserFallback.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
+                }}
+                try {{
+                    startActivity(browserFallback);
+                    return true;
+                }} catch (Exception ignored) {{
+                    // Fall through to the unscoped fallback below.
+                }}
+            }}
             if (preferredPackage.length() > 0) {{
                 Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                 fallback.addCategory(Intent.CATEGORY_BROWSABLE);
@@ -905,6 +1124,7 @@ write_if_changed "${OVERLAY_VALUES_DIR}/config.xml" <<EOF_XML
     <bool name="config_enableWifiDisplay">false</bool>
     <bool name="config_disableLockscreenByDefault">true</bool>
     <integer name="config_defaultNightMode">${SYSTEM_UI_NIGHT_MODE_VALUE}</integer>
+    <string name="config_ntpServer" translatable="false">${SYSTEM_NTP_SERVER}</string>
     <string name="config_timeZoneRulesUpdaterPackage" translatable="false">com.android.timezone.updater</string>
     <string name="config_timeZoneRulesDataPackage" translatable="false">com.android.timezone.data</string>
 </resources>
@@ -916,10 +1136,39 @@ write_if_changed "${SETTINGS_OVERLAY_VALUES_DIR}/defaults.xml" <<EOF_XML
     <bool name="def_device_provisioned">true</bool>
     <bool name="def_user_setup_complete">true</bool>
     <bool name="def_lockscreen_disabled">true</bool>
+    <bool name="def_auto_time">${SYSTEM_AUTO_TIME}</bool>
+    <bool name="def_auto_time_zone">${SYSTEM_AUTO_TIME_ZONE}</bool>
+    <string name="def_location_providers_allowed" translatable="false">${SYSTEM_LOCATION_PROVIDERS_ALLOWED}</string>
     <integer name="def_screen_off_timeout">2147483647</integer>
     <string name="def_immersive_mode_confirmations" translatable="false">confirmed</string>
 </resources>
 EOF_XML
+
+python3 - "${DEFAULT_PERMISSIONS_DIR}/rosie-kiosk.xml" <<'PY'
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+root = ET.Element("exceptions")
+for grant in json.loads(os.environ.get("APP_RUNTIME_PERMISSION_GRANTS_JSON", "[]")):
+    package = grant["package"]
+    if not package:
+        continue
+    exception = ET.SubElement(root, "exception", {"package": package})
+    for permission in grant.get("permissions", []):
+        ET.SubElement(exception, "permission", {"name": permission, "fixed": "false"})
+tree = ET.ElementTree(root)
+tmp = path + ".rosie-tmp"
+tree.write(tmp, encoding="utf-8", xml_declaration=True)
+with open(tmp, "a", encoding="utf-8") as handle:
+    handle.write("\n")
+if not os.path.exists(path) or open(tmp, "rb").read() != open(path, "rb").read():
+    os.replace(tmp, path)
+else:
+    os.unlink(tmp)
+PY
 
 {
 cat <<EOF_MK
@@ -936,6 +1185,14 @@ PRODUCT_PROPERTY_OVERRIDES += \\
     ro.setupwizard.mode=DISABLED
 
 EOF_MK
+
+if [[ -n "${SYSTEM_TIMEZONE:-}" ]]; then
+cat <<EOF_MK
+PRODUCT_PROPERTY_OVERRIDES += \\
+    persist.sys.timezone=${SYSTEM_TIMEZONE}
+
+EOF_MK
+fi
 
 if [[ -n "${ROOT_ACCESS:-}" ]]; then
 cat <<EOF_MK
@@ -954,6 +1211,9 @@ EOF_MK
 fi
 
 cat <<EOF_MK
+PRODUCT_COPY_FILES += \\
+    vendor/rosie/default-permissions/rosie-kiosk.xml:system/etc/default-permissions/rosie-kiosk.xml
+
 PRODUCT_PACKAGES += \\
     ${HA_MODULE} \\
     ${BROWSER_MODULE} \\
@@ -963,6 +1223,11 @@ cat <<EOF_MK
     ${HA_BROWSER_MODULE} \\
 EOF_MK
 fi
+for module in ${KIOSK_EXTRA_APP_MODULES}; do
+cat <<EOF_MK
+    ${module} \\
+EOF_MK
+done
 cat <<EOF_MK
     ${KIOSK_LAUNCHER_MODULE}
 
@@ -970,7 +1235,8 @@ PRODUCT_PACKAGES := \$(filter-out ${KIOSK_REMOVE_MODULES},\$(PRODUCT_PACKAGES))
 EOF_MK
 } | write_if_changed "${PRODUCT_DIR}/rosie_kiosk_tablet.mk"
 
-write_if_changed "${PRODUCT_DIR}/rosie_kiosk_emulator.mk" <<EOF_MK
+{
+cat <<EOF_MK
 # Rosie local Home Assistant kiosk additions for emulator validation.
 \$(call inherit-product-if-exists, vendor/lineage/config/lineage_sdk_common.mk)
 DEVICE_PACKAGE_OVERLAYS += vendor/lineage/overlay/common vendor/rosie/overlay
@@ -984,14 +1250,34 @@ PRODUCT_PROPERTY_OVERRIDES += \\
     fw.show_multiuserui=0 \\
     ro.setupwizard.mode=DISABLED
 
+EOF_MK
+if [[ -n "${SYSTEM_TIMEZONE:-}" ]]; then
+cat <<EOF_MK
+PRODUCT_PROPERTY_OVERRIDES += \\
+    persist.sys.timezone=${SYSTEM_TIMEZONE}
+
+EOF_MK
+fi
+cat <<EOF_MK
+PRODUCT_COPY_FILES += \\
+    vendor/rosie/default-permissions/rosie-kiosk.xml:system/etc/default-permissions/rosie-kiosk.xml
+
 PRODUCT_PACKAGES += \\
     LineageSettingsProvider \\
     ${HA_MODULE} \\
     ${EMULATOR_BROWSER_MODULE} \\
+EOF_MK
+for module in ${KIOSK_EXTRA_APP_MODULES}; do
+cat <<EOF_MK
+    ${module} \\
+EOF_MK
+done
+cat <<EOF_MK
     ${KIOSK_LAUNCHER_MODULE}
 
 PRODUCT_PACKAGES := \$(filter-out ${KIOSK_REMOVE_MODULES},\$(PRODUCT_PACKAGES))
 EOF_MK
+} | write_if_changed "${PRODUCT_DIR}/rosie_kiosk_emulator.mk"
 
 append_product_include() {
   local makefile="$1"

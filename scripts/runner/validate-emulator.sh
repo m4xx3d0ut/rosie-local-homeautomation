@@ -44,6 +44,10 @@ collect_runtime_artifacts() {
   adb_capture "${ARTIFACT_DIR}/logs/package-kiosk.txt" shell dumpsys package "${KIOSK_LAUNCHER_PACKAGE}"
   adb_capture "${ARTIFACT_DIR}/logs/package-ha.txt" shell dumpsys package "${HA_PACKAGE}"
   adb_capture "${ARTIFACT_DIR}/logs/package-browser.txt" shell dumpsys package "${BROWSER_VALIDATION_PACKAGE}"
+  for package in ${KIOSK_EXTRA_APP_PACKAGES:-}; do
+    safe_name="${package//[^A-Za-z0-9_.-]/_}"
+    adb_capture "${ARTIFACT_DIR}/logs/package-${safe_name}.txt" shell dumpsys package "${package}"
+  done
   adb_capture "${ARTIFACT_DIR}/logs/logcat.txt" logcat -d
 }
 
@@ -186,6 +190,10 @@ grep -Fx "package:${BROWSER_VALIDATION_PACKAGE}" "${ARTIFACT_DIR}/logs/packages.
   || fail "browser package is not installed: ${BROWSER_VALIDATION_PACKAGE}"
 grep -Fx "package:${KIOSK_LAUNCHER_PACKAGE}" "${ARTIFACT_DIR}/logs/packages.txt" \
   || fail "kiosk launcher package is not installed: ${KIOSK_LAUNCHER_PACKAGE}"
+for package in ${KIOSK_EXTRA_APP_PACKAGES:-}; do
+  grep -Fx "package:${package}" "${ARTIFACT_DIR}/logs/packages.txt" \
+    || fail "pinned app package is not installed: ${package}"
+done
 
 for package in ${NO_GMS_PACKAGES}; do
   if grep -Fx "package:${package}" "${ARTIFACT_DIR}/logs/packages.txt"; then
@@ -204,6 +212,11 @@ user_setup_complete="$("${ADB_BIN}" -s emulator-5554 shell settings get secure u
 lockscreen_disabled="$("${ADB_BIN}" -s emulator-5554 shell settings get secure lockscreen.disabled | tr -d '\r')"
 immersive_confirmations="$("${ADB_BIN}" -s emulator-5554 shell settings get secure immersive_mode_confirmations | tr -d '\r')"
 uimode_night="$("${ADB_BIN}" -s emulator-5554 shell cmd uimode night | tr -d '\r')"
+auto_time="$("${ADB_BIN}" -s emulator-5554 shell settings get global auto_time | tr -d '\r')"
+auto_time_zone="$("${ADB_BIN}" -s emulator-5554 shell settings get global auto_time_zone | tr -d '\r')"
+ntp_server="$("${ADB_BIN}" -s emulator-5554 shell settings get global ntp_server | tr -d '\r')"
+timezone_name="$("${ADB_BIN}" -s emulator-5554 shell getprop persist.sys.timezone | tr -d '\r')"
+location_providers="$("${ADB_BIN}" -s emulator-5554 shell settings get secure location_providers_allowed | tr -d '\r')"
 [[ "${device_provisioned}" == "1" ]] || fail "device_provisioned is ${device_provisioned}, expected 1"
 [[ "${user_setup_complete}" == "1" ]] || fail "user_setup_complete is ${user_setup_complete}, expected 1"
 [[ "${lockscreen_disabled}" == "1" ]] || fail "lockscreen.disabled is ${lockscreen_disabled}, expected 1"
@@ -211,6 +224,37 @@ uimode_night="$("${ADB_BIN}" -s emulator-5554 shell cmd uimode night | tr -d '\r
   || fail "immersive_mode_confirmations is ${immersive_confirmations}, expected confirmed"
 [[ "${uimode_night}" == "Night mode: ${SYSTEM_UI_NIGHT_MODE}" ]] \
   || fail "uimode night is ${uimode_night}, expected Night mode: ${SYSTEM_UI_NIGHT_MODE}"
+[[ "${auto_time}" == "${SYSTEM_AUTO_TIME_VALUE}" ]] \
+  || fail "auto_time is ${auto_time}, expected ${SYSTEM_AUTO_TIME_VALUE}"
+[[ "${auto_time_zone}" == "${SYSTEM_AUTO_TIME_ZONE_VALUE}" ]] \
+  || fail "auto_time_zone is ${auto_time_zone}, expected ${SYSTEM_AUTO_TIME_ZONE_VALUE}"
+[[ "${ntp_server}" == "${SYSTEM_NTP_SERVER}" || "${ntp_server}" == "null" ]] \
+  || fail "ntp_server is ${ntp_server}, expected ${SYSTEM_NTP_SERVER}"
+if [[ -n "${SYSTEM_TIMEZONE:-}" ]]; then
+  [[ "${timezone_name}" == "${SYSTEM_TIMEZONE}" ]] \
+    || fail "timezone is ${timezone_name}, expected ${SYSTEM_TIMEZONE}"
+fi
+IFS=',' read -r -a expected_location_providers <<< "${SYSTEM_LOCATION_PROVIDERS_ALLOWED}"
+for provider in "${expected_location_providers[@]}"; do
+  [[ ",${location_providers}," == *",${provider},"* ]] \
+    || fail "location provider ${provider} missing from ${location_providers}"
+done
+
+python3 - "${APP_RUNTIME_PERMISSION_GRANTS_JSON}" <<'PY' > "${ARTIFACT_DIR}/logs/runtime-permission-grants.txt"
+import json
+import sys
+
+for grant in json.loads(sys.argv[1]):
+    for permission in grant.get("permissions", []):
+        print(f"{grant['package']} {permission}")
+PY
+while read -r package permission; do
+  [[ -n "${package}" ]] || continue
+  "${ADB_BIN}" -s emulator-5554 shell dumpsys package "${package}" \
+    | tr -d '\r' \
+    | grep -F "${permission}: granted=true" \
+    || fail "${permission} is not granted for ${package}"
+done < "${ARTIFACT_DIR}/logs/runtime-permission-grants.txt"
 
 "${ADB_BIN}" -s emulator-5554 shell \
   cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME \
@@ -221,13 +265,16 @@ grep -F "${KIOSK_LAUNCHER_PACKAGE}" "${ARTIFACT_DIR}/logs/home-resolve.txt" \
 
 "${ADB_BIN}" -s emulator-5554 shell input keyevent KEYCODE_WAKEUP || true
 "${ADB_BIN}" -s emulator-5554 shell input keyevent KEYCODE_HOME || true
-sleep 2
+sleep 6
+"${ADB_BIN}" -s emulator-5554 shell cmd statusbar collapse >/dev/null 2>&1 || true
+sleep 1
 "${ADB_BIN}" -s emulator-5554 shell dumpsys window windows \
   > "${ARTIFACT_DIR}/logs/home-focus.txt" 2>&1 || true
 assert_window_focuses_package \
   "${ARTIFACT_DIR}/logs/home-focus.txt" \
   "${KIOSK_LAUNCHER_PACKAGE}" \
   "HOME key did not focus kiosk launcher"
+"${ADB_BIN}" -s emulator-5554 exec-out screencap -p > "${ARTIFACT_DIR}/screenshots/kiosk-home.png" || true
 
 "${ADB_BIN}" -s emulator-5554 shell monkey -p "${HA_PACKAGE}" -c android.intent.category.LAUNCHER 1 \
   > "${ARTIFACT_DIR}/logs/launch-ha.log" 2>&1 \

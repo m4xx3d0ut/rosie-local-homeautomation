@@ -22,6 +22,13 @@ android:
   abi: armeabi-v7a
 system:
   ui_night_mode: auto
+  time:
+    auto_time: true
+    auto_time_zone: true
+    ntp_server: pool.ntp.org
+  location:
+    providers_allowed:
+    - gps
 targets:
   tablet:
     device: shieldtablet
@@ -44,6 +51,9 @@ apps:
     version_code: 21576
     min_sdk: 23
     abi: armeabi-v7a
+    runtime_permissions:
+    - android.permission.ACCESS_COARSE_LOCATION
+    - android.permission.ACCESS_FINE_LOCATION
   browser:
     module: FennecFdroid
     package: org.mozilla.fennec_fdroid
@@ -62,10 +72,62 @@ apps:
     version_code: 78
     min_sdk: 26
     abi: x86
+  youtube:
+    module: NewPipe
+    package: org.schabi.newpipe
+    apk: inputs/apks/NewPipe.apk
+    sha256: dbc8a1bb7a3db16f1d2fa9f96157171cc80453d1ff6e51108e73c007ea05cf87
+    version: 0.28.5
+    version_code: 1010
+    min_sdk: 21
+    abi: armeabi-v7a
+  music:
+    module: Kreate
+    package: me.knighthat.kreate
+    apk: inputs/apks/Kreate.apk
+    sha256: 6947004781ebd094014b7e0d36e85d0a0650e22c2b925c71fa0823fd4d88d3e3
+    version: 2.1.4-fdroid
+    version_code: 135
+    min_sdk: 23
+    abi: armeabi-v7a
+  notes:
+    module: Joplin
+    package: net.cozic.joplin
+    apk: inputs/apks/Joplin.apk
+    sha256: 7da968663b6c31c46433ac05cf8161376da3e943e3f44219db1ce9a4c930e405
+    version: 3.6.18
+    version_code: 2097806
+    min_sdk: 24
+    abi: armeabi-v7a
+  weather:
+    module: BreezyWeather
+    package: org.breezyweather
+    apk: inputs/apks/BreezyWeather.apk
+    sha256: d975fa2f8dce8bbba713cc72f53032d2af5aa71d18e4334a8ce0a0059d21b2c9
+    version: 6.2.0_freenet
+    version_code: 60200
+    min_sdk: 23
+    abi: armeabi-v7a
+    runtime_permissions:
+    - android.permission.ACCESS_COARSE_LOCATION
+    - android.permission.ACCESS_FINE_LOCATION
 kiosk:
   launcher:
     module: RosieKioskLauncher
     package: local.rosie.kiosk
+  pinned_apps:
+    - app: home_assistant
+      label: Home Assistant
+    - app: browser
+      label: Browser
+    - app: youtube
+      label: YouTube
+    - app: music
+      label: Music
+    - app: notes
+      label: Notes
+    - app: weather
+      label: Weather
   theme:
     title: Rosie Kiosk
     subtitle: Home Assistant and browser access

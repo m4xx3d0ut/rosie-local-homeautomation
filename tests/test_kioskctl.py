@@ -26,10 +26,22 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(profile["targets"]["emulator"]["lunch"], "sdk_phone_x86-userdebug")
         self.assertEqual(profile["system"]["ui_night_mode"], "auto")
         self.assertNotIn("keyboard_theme", profile["system"])
+        self.assertTrue(kioskctl.system_auto_time(profile))
+        self.assertTrue(kioskctl.system_auto_time_zone(profile))
+        self.assertEqual(kioskctl.system_ntp_server(profile), "pool.ntp.org")
+        self.assertEqual(kioskctl.location_providers_allowed(profile), ["gps"])
         self.assertEqual(profile["apps"]["browser"]["package"], "org.mozilla.fennec_fdroid")
         self.assertNotIn("runtime_defaults", profile["apps"]["browser"])
         self.assertEqual(profile["apps"]["emulator_browser"]["package"], "com.stoutner.privacybrowser.standard")
+        self.assertEqual(profile["apps"]["youtube"]["package"], "org.schabi.newpipe")
+        self.assertEqual(profile["apps"]["music"]["package"], "me.knighthat.kreate")
+        self.assertEqual(profile["apps"]["notes"]["package"], "net.cozic.joplin")
+        self.assertEqual(profile["apps"]["weather"]["package"], "org.breezyweather")
         self.assertEqual(profile["kiosk"]["launcher"]["package"], "local.rosie.kiosk")
+        self.assertEqual(
+            [item["app"] for item in kioskctl.kiosk_pinned_apps(profile)],
+            ["home_assistant", "browser", "youtube", "music", "notes", "weather"],
+        )
         self.assertEqual(profile["kiosk"]["theme"]["background"]["type"], "color")
         self.assertEqual(profile["kiosk"]["theme"]["buttons"]["radius_dp"], 6)
         self.assertEqual(profile["kiosk"]["theme"]["text"]["shadow_radius_dp"], 2)
@@ -56,9 +68,24 @@ class KioskCtlTests(unittest.TestCase):
         self.assertEqual(env["KIOSK_BROWSER_URL"], "")
         self.assertEqual(env["KIOSK_BROWSER_LAUNCH_POLICY"], "always_new_tab")
         self.assertEqual(env["KIOSK_HA_BROWSER_PACKAGE"], "org.mozilla.fennec_fdroid")
+        self.assertIn('"app": "youtube"', env["KIOSK_PINNED_APPS_JSON"])
+        self.assertIn('"app": "weather"', env["KIOSK_PINNED_APPS_JSON"])
+        self.assertEqual(env["KIOSK_EXTRA_APP_MODULES"], "NewPipe Kreate Joplin BreezyWeather")
+        self.assertIn("org.schabi.newpipe", env["KIOSK_EXTRA_APP_PACKAGES"])
+        self.assertIn("org.breezyweather", env["KIOSK_EXTRA_APP_PACKAGES"])
+        self.assertEqual(env["BROWSER_FALLBACK_PACKAGE"], "com.stoutner.privacybrowser.standard")
         self.assertEqual(env["ROOT_ACCESS"], "")
         self.assertEqual(env["SYSTEM_UI_NIGHT_MODE"], "auto")
         self.assertEqual(env["SYSTEM_UI_NIGHT_MODE_VALUE"], "0")
+        self.assertEqual(env["SYSTEM_AUTO_TIME"], "true")
+        self.assertEqual(env["SYSTEM_AUTO_TIME_VALUE"], "1")
+        self.assertEqual(env["SYSTEM_AUTO_TIME_ZONE"], "true")
+        self.assertEqual(env["SYSTEM_AUTO_TIME_ZONE_VALUE"], "1")
+        self.assertEqual(env["SYSTEM_TIMEZONE"], "")
+        self.assertEqual(env["SYSTEM_NTP_SERVER"], "pool.ntp.org")
+        self.assertEqual(env["SYSTEM_LOCATION_PROVIDERS_ALLOWED"], "gps")
+        self.assertIn("io.homeassistant.companion.android.minimal", env["APP_RUNTIME_PERMISSION_GRANTS_JSON"])
+        self.assertIn("org.breezyweather", env["APP_RUNTIME_PERMISSION_GRANTS_JSON"])
 
     def test_profile_overlay_deep_merges_private_theme(self) -> None:
         work = kioskctl.ROOT / ".work" / "tests"
@@ -105,6 +132,35 @@ class KioskCtlTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "browser_launch_policy"):
             kioskctl.validate_profile_shape(profile)
 
+    def test_pinned_apps_reject_missing_app_reference(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["kiosk"]["pinned_apps"] = [{"app": "calendar", "label": "Calendar"}]
+
+        with self.assertRaisesRegex(ValueError, "references missing apps.calendar"):
+            kioskctl.validate_profile_shape(profile)
+
+    def test_pinned_apps_default_to_legacy_buttons_when_unset(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        del profile["kiosk"]["pinned_apps"]
+
+        pinned = kioskctl.kiosk_pinned_apps(profile)
+
+        self.assertEqual(
+            pinned,
+            [
+                {
+                    "app": "home_assistant",
+                    "label": "Home Assistant",
+                    "package": "io.homeassistant.companion.android.minimal",
+                },
+                {
+                    "app": "browser",
+                    "label": "Browser",
+                    "package": "org.mozilla.fennec_fdroid",
+                },
+            ],
+        )
+
     def test_debug_root_access_maps_adb_to_lineage_value(self) -> None:
         profile = deepcopy(kioskctl.load_profile(PROFILE))
         profile["debug"] = {"root_access": "adb"}
@@ -148,6 +204,31 @@ class KioskCtlTests(unittest.TestCase):
 
         self.assertEqual(kioskctl.keyboard_theme_name(profile), "dark")
         self.assertEqual(kioskctl.keyboard_theme_value(profile), "4")
+
+    def test_system_time_and_location_overlay_defaults(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["system"]["time"] = {
+            "auto_time": True,
+            "auto_time_zone": False,
+            "timezone": "America/Los_Angeles",
+            "ntp_server": "pool.ntp.org",
+        }
+        profile["system"]["location"] = {"providers_allowed": ["gps", "network"]}
+
+        env = kioskctl.shell_env(profile, container=True)
+
+        self.assertEqual(env["SYSTEM_AUTO_TIME_VALUE"], "1")
+        self.assertEqual(env["SYSTEM_AUTO_TIME_ZONE_VALUE"], "0")
+        self.assertEqual(env["SYSTEM_TIMEZONE"], "America/Los_Angeles")
+        self.assertEqual(env["SYSTEM_NTP_SERVER"], "pool.ntp.org")
+        self.assertEqual(env["SYSTEM_LOCATION_PROVIDERS_ALLOWED"], "gps,network")
+
+    def test_system_location_rejects_unknown_provider(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["system"]["location"] = {"providers_allowed": ["gps", "wifi"]}
+
+        with self.assertRaisesRegex(ValueError, "providers_allowed"):
+            kioskctl.validate_profile_shape(profile)
 
     def test_browser_runtime_defaults_are_opt_in(self) -> None:
         profile = deepcopy(kioskctl.load_profile(PROFILE))
@@ -199,11 +280,48 @@ class KioskCtlTests(unittest.TestCase):
     def test_app_defaults_skip_when_adb_root_is_not_enabled(self) -> None:
         profile = deepcopy(kioskctl.load_profile(PROFILE))
         profile["debug"] = {"root_access": "disabled"}
+        for app in profile["apps"].values():
+            if isinstance(app, dict):
+                app.pop("runtime_permissions", None)
 
         result = kioskctl.apply_runtime_app_defaults(object(), serial="abc123", profile=profile)  # type: ignore[arg-type]
 
         self.assertEqual(result["status"], "skipped")
         self.assertIn("adb root", result["reason"])
+
+    def test_runtime_permission_grants_resolve_from_profile(self) -> None:
+        profile = kioskctl.load_profile(PROFILE)
+        grants = kioskctl.runtime_permission_grants(profile)
+
+        self.assertIn(
+            {
+                "app": "home_assistant",
+                "package": "io.homeassistant.companion.android.minimal",
+                "permissions": [
+                    "android.permission.ACCESS_COARSE_LOCATION",
+                    "android.permission.ACCESS_FINE_LOCATION",
+                ],
+            },
+            grants,
+        )
+        self.assertIn(
+            {
+                "app": "weather",
+                "package": "org.breezyweather",
+                "permissions": [
+                    "android.permission.ACCESS_COARSE_LOCATION",
+                    "android.permission.ACCESS_FINE_LOCATION",
+                ],
+            },
+            grants,
+        )
+
+    def test_runtime_permissions_reject_invalid_permission_name(self) -> None:
+        profile = deepcopy(kioskctl.load_profile(PROFILE))
+        profile["apps"]["weather"]["runtime_permissions"] = ["android.permission.location"]
+
+        with self.assertRaisesRegex(ValueError, "runtime_permissions"):
+            kioskctl.validate_profile_shape(profile)
 
     def test_fennec_runtime_defaults_script_writes_dark_prefs(self) -> None:
         profile = deepcopy(kioskctl.load_profile(PROFILE))

@@ -82,6 +82,20 @@ KEYBOARD_THEME_VALUES = {
     "dark": "4",
     "material_dark": "4",
 }
+BOOLEAN_CONFIG_VALUES = {
+    True: True,
+    False: False,
+    "1": True,
+    "true": True,
+    "yes": True,
+    "on": True,
+    "0": False,
+    "false": False,
+    "no": False,
+    "off": False,
+}
+LOCATION_PROVIDER_VALUES = {"gps", "network"}
+RUNTIME_PERMISSION_RE = re.compile(r"^android\.permission\.[A-Z0-9_]+$")
 LATINIME_PACKAGE = "com.android.inputmethod.latin"
 LATINIME_IME = "com.android.inputmethod.latin/.LatinIME"
 LATINIME_THEME_PREF = "pref_keyboard_theme_20140509"
@@ -120,6 +134,10 @@ DEFAULT_KIOSK_THEME: dict[str, Any] = {
         "width_dp": 520,
     },
 }
+DEFAULT_PINNED_APPS = [
+    {"app": "home_assistant", "label": "Home Assistant"},
+    {"app": "browser", "label": "Browser"},
+]
 
 
 def repo_path(value: str | Path) -> Path:
@@ -543,6 +561,82 @@ def system_config(profile: dict[str, Any]) -> dict[str, Any]:
     return config if isinstance(config, dict) else {}
 
 
+def bool_config_value(value: Any, name: str, default: bool) -> bool:
+    raw = default if value is None else value
+    key: Any = raw if isinstance(raw, bool) else str(raw).strip().lower()
+    if key not in BOOLEAN_CONFIG_VALUES:
+        raise ValueError(f"{name} must be a boolean")
+    return BOOLEAN_CONFIG_VALUES[key]
+
+
+def bool_setting_value(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def bool_xml_value(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def system_time_config(profile: dict[str, Any]) -> dict[str, Any]:
+    config = system_config(profile).get("time")
+    return config if isinstance(config, dict) else {}
+
+
+def system_auto_time(profile: dict[str, Any]) -> bool:
+    return bool_config_value(system_time_config(profile).get("auto_time"), "system.time.auto_time", True)
+
+
+def system_auto_time_zone(profile: dict[str, Any]) -> bool:
+    return bool_config_value(
+        system_time_config(profile).get("auto_time_zone"),
+        "system.time.auto_time_zone",
+        True,
+    )
+
+
+def system_timezone(profile: dict[str, Any]) -> str:
+    value = str(system_time_config(profile).get("timezone") or "").strip()
+    if not value:
+        return ""
+    if value not in {"UTC", "GMT"} and not re.match(r"^[A-Za-z_]+/[A-Za-z0-9_+./-]+$", value):
+        raise ValueError("system.time.timezone must be an IANA timezone such as America/Los_Angeles")
+    return value
+
+
+def system_ntp_server(profile: dict[str, Any]) -> str:
+    value = str(system_time_config(profile).get("ntp_server") or "pool.ntp.org").strip()
+    if not value or re.search(r"\s", value):
+        raise ValueError("system.time.ntp_server must be a hostname or IP address")
+    return value
+
+
+def system_location_config(profile: dict[str, Any]) -> dict[str, Any]:
+    config = system_config(profile).get("location")
+    return config if isinstance(config, dict) else {}
+
+
+def location_providers_allowed(profile: dict[str, Any]) -> list[str]:
+    raw = system_location_config(profile).get("providers_allowed", ["gps"])
+    if isinstance(raw, str):
+        values = [item.strip().lower() for item in raw.split(",")]
+    elif isinstance(raw, list):
+        values = [str(item).strip().lower() for item in raw]
+    else:
+        raise ValueError("system.location.providers_allowed must be a list or comma-separated string")
+    providers: list[str] = []
+    for provider in values:
+        if not provider:
+            continue
+        if provider not in LOCATION_PROVIDER_VALUES:
+            raise ValueError(
+                "system.location.providers_allowed entries must be one of: "
+                + ", ".join(sorted(LOCATION_PROVIDER_VALUES))
+            )
+        if provider not in providers:
+            providers.append(provider)
+    return providers
+
+
 def ui_night_mode_value(profile: dict[str, Any]) -> str:
     raw = system_config(profile).get("ui_night_mode", "auto")
     value = str(raw).strip().lower()
@@ -627,6 +721,50 @@ def browser_runtime_default_targets(profile: dict[str, Any]) -> list[dict[str, s
     return targets
 
 
+def app_runtime_permissions(app_name: str, app: dict[str, Any]) -> list[str]:
+    raw = app.get("runtime_permissions", [])
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"apps.{app_name}.runtime_permissions must be a list")
+    permissions: list[str] = []
+    for index, item in enumerate(raw):
+        permission = str(item).strip()
+        if not permission or not RUNTIME_PERMISSION_RE.match(permission):
+            raise ValueError(
+                f"apps.{app_name}.runtime_permissions[{index}] must be an android.permission.* name"
+            )
+        if permission not in permissions:
+            permissions.append(permission)
+    return permissions
+
+
+def runtime_permission_grants(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    grants: list[dict[str, Any]] = []
+    apps = profile.get("apps") or {}
+    for app_name, app in apps.items():
+        if not isinstance(app, dict):
+            continue
+        permissions = app_runtime_permissions(app_name, app)
+        if not permissions:
+            continue
+        package = str(app.get("package") or "")
+        if not package:
+            raise ValueError(f"apps.{app_name}.package is required for runtime permissions")
+        grants.append(
+            {
+                "app": str(app_name),
+                "package": package,
+                "permissions": permissions,
+            }
+        )
+    return grants
+
+
+def runtime_permission_grants_json(profile: dict[str, Any]) -> str:
+    return json.dumps(runtime_permission_grants(profile), sort_keys=True)
+
+
 def is_fennec_family_package(package: str) -> bool:
     return package in FENNEC_FAMILY_PACKAGES
 
@@ -664,6 +802,84 @@ def kiosk_launch(profile: dict[str, Any]) -> dict[str, str]:
             or ""
         ),
     }
+
+
+def app_for_runtime(profile: dict[str, Any], app_key: str) -> dict[str, Any]:
+    if app_key == "browser" and "emulator_browser" in profile.get("apps", {}):
+        return profile["apps"]["emulator_browser"]
+    return profile["apps"][app_key]
+
+
+def kiosk_pinned_apps(profile: dict[str, Any]) -> list[dict[str, str]]:
+    kiosk = kiosk_config(profile)
+    pinned = kiosk.get("pinned_apps")
+    if pinned is None:
+        theme = kiosk_theme(profile)
+        buttons = theme["buttons"]
+        pinned = [
+            {"app": "home_assistant", "label": str(buttons["home_assistant_label"])},
+            {"app": "browser", "label": str(buttons["browser_label"])},
+        ]
+    if not isinstance(pinned, list):
+        raise ValueError("kiosk.pinned_apps must be a list")
+
+    apps = profile.get("apps") or {}
+    result: list[dict[str, str]] = []
+    for index, item in enumerate(pinned):
+        if not isinstance(item, dict):
+            raise ValueError(f"kiosk.pinned_apps[{index}] must be a mapping")
+        app_key = item.get("app")
+        label = item.get("label")
+        if not isinstance(app_key, str) or not app_key:
+            raise ValueError(f"kiosk.pinned_apps[{index}].app must be a non-empty string")
+        if app_key not in apps:
+            raise ValueError(f"kiosk.pinned_apps[{index}].app references missing apps.{app_key}")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"kiosk.pinned_apps[{index}].label must be a non-empty string")
+        package = str(apps[app_key].get("package") or "")
+        if not package:
+            raise ValueError(f"apps.{app_key}.package is required for pinned apps")
+        result.append(
+            {
+                "app": app_key,
+                "label": label.strip(),
+                "package": package,
+            }
+        )
+    return result
+
+
+def extra_pinned_app_keys(profile: dict[str, Any]) -> list[str]:
+    special = {"home_assistant", "browser", "home_assistant_browser", "emulator_browser"}
+    keys: list[str] = []
+    for item in kiosk_pinned_apps(profile):
+        key = item["app"]
+        if key not in special and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def prebuilt_app_modules(profile: dict[str, Any], app_keys: list[str]) -> str:
+    return " ".join(str(profile["apps"][key]["module"]) for key in app_keys)
+
+
+def extra_pinned_apps_json(profile: dict[str, Any]) -> str:
+    payload = []
+    for key in extra_pinned_app_keys(profile):
+        app = profile["apps"][key]
+        payload.append(
+            {
+                "app": key,
+                "module": str(app["module"]),
+                "package": str(app["package"]),
+                "apk": str(app["apk"]),
+            }
+        )
+    return json.dumps(payload, sort_keys=True)
+
+
+def kiosk_pinned_apps_json(profile: dict[str, Any]) -> str:
+    return json.dumps(kiosk_pinned_apps(profile), sort_keys=True)
 
 
 def bool_string(value: Any) -> str:
@@ -717,6 +933,7 @@ def kiosk_theme_env(profile: dict[str, Any]) -> dict[str, str]:
         "KIOSK_BROWSER_URL": str(launch["browser_url"]),
         "KIOSK_BROWSER_LAUNCH_POLICY": str(launch["browser_launch_policy"]),
         "KIOSK_HA_BROWSER_PACKAGE": str(launch["home_assistant_browser_package"]),
+        "KIOSK_PINNED_APPS_JSON": kiosk_pinned_apps_json(profile),
     }
 
 
@@ -991,6 +1208,36 @@ def collect_basic_device_evidence(
             ["cmd", "uimode", "night"],
             check=False,
         ).stdout.strip(),
+        "auto_time": adb_shell(
+            runner,
+            serial,
+            ["settings", "get", "global", "auto_time"],
+            check=False,
+        ).stdout.strip(),
+        "auto_time_zone": adb_shell(
+            runner,
+            serial,
+            ["settings", "get", "global", "auto_time_zone"],
+            check=False,
+        ).stdout.strip(),
+        "ntp_server": adb_shell(
+            runner,
+            serial,
+            ["settings", "get", "global", "ntp_server"],
+            check=False,
+        ).stdout.strip(),
+        "timezone": adb_shell(
+            runner,
+            serial,
+            ["getprop", "persist.sys.timezone"],
+            check=False,
+        ).stdout.strip(),
+        "location_providers_allowed": adb_shell(
+            runner,
+            serial,
+            ["settings", "get", "secure", "location_providers_allowed"],
+            check=False,
+        ).stdout.strip(),
     }
     (out_dir / "settings-summary.json").write_text(
         json.dumps(settings, indent=2, sort_keys=True) + "\n",
@@ -1152,15 +1399,52 @@ def apply_runtime_system_defaults(
     profile: dict[str, Any],
 ) -> None:
     mode = ui_night_mode_name(profile)
-    result = adb_shell(
-        runner,
-        serial,
-        ["cmd", "uimode", "night", mode],
-        check=False,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        raise DeviceError(f"failed to set Android UI night mode: {result.stderr or result.stdout}")
+    commands = [
+        (["cmd", "uimode", "night", mode], "Android UI night mode"),
+        (["settings", "put", "global", "auto_time", bool_setting_value(system_auto_time(profile))], "automatic time"),
+        (
+            ["settings", "put", "global", "auto_time_zone", bool_setting_value(system_auto_time_zone(profile))],
+            "automatic time zone",
+        ),
+        (["settings", "put", "global", "ntp_server", system_ntp_server(profile)], "NTP server"),
+    ]
+    for command, label in commands:
+        result = adb_shell(runner, serial, command, check=False, timeout=30)
+        if result.returncode != 0:
+            raise DeviceError(f"failed to set {label}: {result.stderr or result.stdout}")
+
+    timezone_name = system_timezone(profile)
+    if timezone_name:
+        result = adb_shell(
+            runner,
+            serial,
+            ["service", "call", "alarm", "3", "s16", timezone_name],
+            check=False,
+            timeout=30,
+        )
+        fallback = adb_shell(
+            runner,
+            serial,
+            ["setprop", "persist.sys.timezone", timezone_name],
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0 and fallback.returncode != 0:
+            raise DeviceError(
+                f"failed to set timezone: {result.stderr or result.stdout}"
+                f"{fallback.stderr or fallback.stdout}"
+            )
+
+    for provider in location_providers_allowed(profile):
+        result = adb_shell(
+            runner,
+            serial,
+            ["settings", "put", "secure", "location_providers_allowed", f"+{provider}"],
+            check=False,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise DeviceError(f"failed to enable location provider {provider}: {result.stderr or result.stdout}")
 
 
 def fennec_theme_booleans(theme: str) -> dict[str, str]:
@@ -1304,20 +1588,58 @@ ime set "$ime_id" >/dev/null 2>&1 || true
 """
 
 
+def apply_runtime_permission_grants(
+    runner: CommandRunner,
+    *,
+    serial: str,
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for grant in runtime_permission_grants(profile):
+        package = str(grant["package"])
+        granted: list[str] = []
+        for permission in grant["permissions"]:
+            result = runner.run(
+                ["adb", "-s", serial, "shell", "pm", "grant", "--user", "0", package, str(permission)],
+                check=False,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                raise DeviceError(
+                    f"failed to grant {permission} to {package}: {result.stderr or result.stdout}"
+                )
+            granted.append(str(permission))
+        results.append(
+            {
+                "app": grant["app"],
+                "package": package,
+                "status": "pass",
+                "permissions": granted,
+            }
+        )
+    return results
+
+
 def apply_runtime_app_defaults(
     runner: CommandRunner,
     *,
     serial: str,
     profile: dict[str, Any],
 ) -> dict[str, Any]:
+    permission_results = apply_runtime_permission_grants(runner, serial=serial, profile=profile)
     if not adb_root_runtime_enabled(profile):
+        if permission_results:
+            return {
+                "status": "pass",
+                "targets": permission_results,
+            }
         return {
             "status": "skipped",
             "reason": "debug.root_access does not enable adb root",
             "targets": [],
         }
     ensure_adb_root(runner, serial=serial)
-    results: list[dict[str, str]] = []
+    results: list[dict[str, Any]] = [*permission_results]
     for target in browser_runtime_default_targets(profile):
         package = target["package"]
         if not is_fennec_family_package(package):
@@ -1383,7 +1705,50 @@ def collect_runtime_app_defaults_evidence(
     out_dir: Path,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
+    targets: list[dict[str, Any]] = []
+    for grant in runtime_permission_grants(profile):
+        package = str(grant["package"])
+        permission_lines = []
+        for permission in grant["permissions"]:
+            permission_lines.append(
+                "if printf '%s\\n' \"$dump\" | grep -F "
+                f"{shlex.quote(str(permission) + ': granted=true')} >/dev/null; then "
+                f"echo {shlex.quote(str(permission) + '=granted')}; else "
+                f"echo {shlex.quote(str(permission) + '=missing')}; status=1; fi"
+            )
+        script = f"""
+set -eu
+pkg={shlex.quote(package)}
+status=0
+dump="$(dumpsys package "$pkg")"
+{chr(10).join(permission_lines)}
+exit "$status"
+"""
+        result = adb_shell_script(runner, serial, script, check=False, timeout=30)
+        text = result.stdout + result.stderr
+        (out_dir / f"app-defaults-permissions-{grant['app']}.txt").write_text(text, encoding="utf-8")
+        permissions: dict[str, str] = {}
+        for line in text.splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                permissions[key] = value
+        targets.append(
+            {
+                "app": grant["app"],
+                "package": package,
+                "status": "pass" if result.returncode == 0 else "fail",
+                "permissions": permissions,
+            }
+        )
+
     if not adb_root_runtime_enabled(profile):
+        if targets:
+            evidence = {
+                "status": "pass",
+                "targets": targets,
+            }
+            write_json(out_dir / "app-defaults.json", evidence)
+            return evidence
         evidence: dict[str, Any] = {
             "status": "skipped",
             "reason": "debug.root_access does not enable adb root",
@@ -1392,7 +1757,6 @@ def collect_runtime_app_defaults_evidence(
         write_json(out_dir / "app-defaults.json", evidence)
         return evidence
     ensure_adb_root(runner, serial=serial)
-    targets: list[dict[str, Any]] = []
     for target in browser_runtime_default_targets(profile):
         package = target["package"]
         if not is_fennec_family_package(package):
@@ -1531,6 +1895,10 @@ def validate_tablet_state(
         package = str(profile["apps"]["home_assistant_browser"]["package"])
         if f"package:{package}" not in packages_text:
             failures.append(f"missing Home Assistant browser package: {package}")
+    for app_key in extra_pinned_app_keys(profile):
+        package = str(profile["apps"][app_key]["package"])
+        if f"package:{package}" not in packages_text:
+            failures.append(f"missing pinned app package: {package}")
 
     launcher_package = kiosk_launcher(profile)["package"]
     if f"package:{launcher_package}" not in packages_text:
@@ -1556,10 +1924,54 @@ def validate_tablet_state(
             "Android UI night mode is "
             f"{evidence['settings'].get('uimode_night')}, expected Night mode: {expected_night}"
         )
+    expected_auto_time = bool_setting_value(system_auto_time(profile))
+    if evidence["settings"].get("auto_time") != expected_auto_time:
+        failures.append(
+            f"auto_time is {evidence['settings'].get('auto_time')}, expected {expected_auto_time}"
+        )
+    expected_auto_time_zone = bool_setting_value(system_auto_time_zone(profile))
+    if evidence["settings"].get("auto_time_zone") != expected_auto_time_zone:
+        failures.append(
+            "auto_time_zone is "
+            f"{evidence['settings'].get('auto_time_zone')}, expected {expected_auto_time_zone}"
+        )
+    expected_ntp_server = system_ntp_server(profile)
+    if evidence["settings"].get("ntp_server") not in {expected_ntp_server, "null"}:
+        failures.append(
+            f"ntp_server is {evidence['settings'].get('ntp_server')}, expected {expected_ntp_server}"
+        )
+    expected_timezone = system_timezone(profile)
+    if expected_timezone and evidence["settings"].get("timezone") != expected_timezone:
+        failures.append(
+            f"timezone is {evidence['settings'].get('timezone')}, expected {expected_timezone}"
+        )
+    actual_location_providers = {
+        item.strip()
+        for item in str(evidence["settings"].get("location_providers_allowed") or "").split(",")
+        if item.strip()
+    }
+    for provider in location_providers_allowed(profile):
+        if provider not in actual_location_providers:
+            failures.append(
+                "location provider "
+                f"{provider} is not enabled; providers={evidence['settings'].get('location_providers_allowed')}"
+            )
     if app_defaults.get("status") == "pass":
         app_default_targets = {
             str(item.get("package")): item for item in app_defaults.get("targets", []) if isinstance(item, dict)
         }
+        for grant in runtime_permission_grants(profile):
+            package = str(grant["package"])
+            actual_defaults = app_default_targets.get(package)
+            if not actual_defaults or actual_defaults.get("status") != "pass":
+                failures.append(f"missing runtime-permission evidence for {package}")
+                continue
+            actual_permissions = actual_defaults.get("permissions") or {}
+            for permission in grant["permissions"]:
+                if actual_permissions.get(permission) != "granted":
+                    failures.append(
+                        f"{package} {permission} is {actual_permissions.get(permission)}, expected granted"
+                    )
         for target in browser_runtime_default_targets(profile):
             package = target["package"]
             if not is_fennec_family_package(package):
@@ -1602,7 +2014,8 @@ def validate_tablet_state(
     if launcher_package not in evidence.get("home_resolve", ""):
         failures.append(f"HOME intent does not resolve to kiosk launcher: {launcher_package}")
 
-    for app_key in ("home_assistant", "browser"):
+    launch_app_keys = ["home_assistant", "browser", *extra_pinned_app_keys(profile)]
+    for app_key in launch_app_keys:
         package = str(profile["apps"][app_key]["package"])
         result = runner.run(
             ["adb", "-s", serial, "shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
@@ -1687,6 +2100,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
         if is_placeholder(app["sha256"]):
             warnings.append(f"apps.{app_name}.sha256 is still a placeholder")
         validate_browser_runtime_defaults_shape(app_name, app)
+        app_runtime_permissions(app_name, app)
     if "home_assistant_browser" in apps:
         app = require_mapping(apps, "home_assistant_browser")
         for key in ("module", "package", "apk", "sha256"):
@@ -1695,6 +2109,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
         if is_placeholder(app["sha256"]):
             warnings.append("apps.home_assistant_browser.sha256 is still a placeholder")
         validate_browser_runtime_defaults_shape("home_assistant_browser", app)
+        app_runtime_permissions("home_assistant_browser", app)
     for app_name, app in apps.items():
         if app_name in ("home_assistant", "browser", "home_assistant_browser"):
             continue
@@ -1705,6 +2120,7 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
                 raise ValueError(f"missing apps.{app_name}.{key}")
         if is_placeholder(app["sha256"]):
             warnings.append(f"apps.{app_name}.sha256 is still a placeholder")
+        app_runtime_permissions(app_name, app)
 
     blobs = require_mapping(profile, "blobs")
     for key in ("archive", "sha256"):
@@ -1748,11 +2164,21 @@ def validate_profile_shape(profile: dict[str, Any]) -> list[str]:
                 raise ValueError(f"kiosk.{key} must be a list")
         warnings.extend(validate_kiosk_theme_shape(kiosk_theme(profile)))
         validate_kiosk_launch_shape(kiosk_launch(profile))
+        kiosk_pinned_apps(profile)
 
     if "system" in profile:
-        require_mapping(profile, "system")
+        system = require_mapping(profile, "system")
+        if "time" in system and not isinstance(system["time"], dict):
+            raise ValueError("system.time must be a mapping")
+        if "location" in system and not isinstance(system["location"], dict):
+            raise ValueError("system.location must be a mapping")
     ui_night_mode_value(profile)
     keyboard_theme_value(profile)
+    system_auto_time(profile)
+    system_auto_time_zone(profile)
+    system_timezone(profile)
+    system_ntp_server(profile)
+    location_providers_allowed(profile)
 
     if "deployment" in profile:
         deployment = require_mapping(profile, "deployment")
@@ -2029,6 +2455,7 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
     emulator_browser = profile["apps"].get("emulator_browser", profile["apps"]["browser"])
     ha_browser = profile["apps"].get("home_assistant_browser", {})
     launcher = kiosk_launcher(profile)
+    extra_app_keys = extra_pinned_app_keys(profile)
     env = {
         "PROFILE_NAME": profile_name(profile),
         "LINEAGE_REPO_URL": str(profile["lineage"]["repo_url"]),
@@ -2059,6 +2486,10 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
         "EMULATOR_BROWSER_PACKAGE": str(emulator_browser["package"]),
         "EMULATOR_BROWSER_APK": str(emulator_browser["apk"]),
         "EMULATOR_BROWSER_SHA256": str(emulator_browser["sha256"]),
+        "BROWSER_FALLBACK_PACKAGE": str(emulator_browser["package"]),
+        "KIOSK_EXTRA_APPS_JSON": extra_pinned_apps_json(profile),
+        "KIOSK_EXTRA_APP_MODULES": prebuilt_app_modules(profile, extra_app_keys),
+        "KIOSK_EXTRA_APP_PACKAGES": " ".join(str(profile["apps"][key]["package"]) for key in extra_app_keys),
         "KIOSK_LAUNCHER_MODULE": launcher["module"],
         "KIOSK_LAUNCHER_PACKAGE": launcher["package"],
         "KIOSK_REMOVE_MODULES": " ".join(kiosk_remove_modules(profile)),
@@ -2069,6 +2500,14 @@ def shell_env(profile: dict[str, Any], *, container: bool) -> dict[str, str]:
         "ROOT_ACCESS": root_access_value(profile),
         "SYSTEM_UI_NIGHT_MODE": ui_night_mode_name(profile),
         "SYSTEM_UI_NIGHT_MODE_VALUE": ui_night_mode_value(profile),
+        "SYSTEM_AUTO_TIME": bool_xml_value(system_auto_time(profile)),
+        "SYSTEM_AUTO_TIME_VALUE": bool_setting_value(system_auto_time(profile)),
+        "SYSTEM_AUTO_TIME_ZONE": bool_xml_value(system_auto_time_zone(profile)),
+        "SYSTEM_AUTO_TIME_ZONE_VALUE": bool_setting_value(system_auto_time_zone(profile)),
+        "SYSTEM_TIMEZONE": system_timezone(profile),
+        "SYSTEM_NTP_SERVER": system_ntp_server(profile),
+        "SYSTEM_LOCATION_PROVIDERS_ALLOWED": ",".join(location_providers_allowed(profile)),
+        "APP_RUNTIME_PERMISSION_GRANTS_JSON": runtime_permission_grants_json(profile),
         "ANDROID_API_LEVEL": str(profile.get("android", {}).get("api_level", "")),
         "ANDROID_ABI": str(profile.get("android", {}).get("abi", "")),
         "ANDROID_ROOT": android_root,
