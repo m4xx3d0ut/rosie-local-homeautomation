@@ -228,6 +228,10 @@ Flashing custom Android images can wipe data or leave a device unbootable. Keep 
 
 The default development images use public Android test keys and development-friendly ADB settings. They are suitable for local testing, not production security.
 
+## License
+
+This repository is licensed under the [Apache License 2.0](LICENSE). Third-party projects, APKs, proprietary blobs, and generated Android images retain their own upstream licenses and are not relicensed by this repository.
+
 ## More Documentation
 
 - [Build pipeline](docs/build-pipeline.md)
